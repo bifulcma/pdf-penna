@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PDF Penna</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#FAF9F5">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="PDF Penna">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Schermata iniziale -->
+<main id="home">
+  <h1>PDF Penna</h1>
+  <p class="sub">Apri un PDF e scrivici sopra con la Apple Pencil.</p>
+  <label class="big-btn" for="file-input">Apri un PDF</label>
+  <input id="file-input" type="file" accept="application/pdf,.pdf" hidden>
+  <h2>Recenti</h2>
+  <ul id="recent-list"></ul>
+  <p id="recent-empty" class="muted">Nessun PDF ancora. Premi “Apri un PDF”.</p>
+</main>
+
+<!-- Schermata di lavoro -->
+<section id="editor" hidden>
+  <header id="toolbar">
+    <button id="btn-back" class="tb" title="Torna ai documenti">‹ Documenti</button>
+    <span class="sep"></span>
+    <button id="tool-pen" class="tb tool active" data-tool="pen">✎ Penna</button>
+    <button id="tool-hl" class="tb tool" data-tool="hl">▬ Evidenziatore</button>
+    <button id="tool-eraser" class="tb tool" data-tool="eraser">⌫ Gomma</button>
+    <span class="sep"></span>
+    <span id="colors">
+      <button class="color active" data-color="#1a1a1a" style="background:#1a1a1a" aria-label="Nero"></button>
+      <button class="color" data-color="#1f5fd1" style="background:#1f5fd1" aria-label="Blu"></button>
+      <button class="color" data-color="#d62828" style="background:#d62828" aria-label="Rosso"></button>
+      <button class="color" data-color="#2a9d4a" style="background:#2a9d4a" aria-label="Verde"></button>
+      <button class="color" data-color="#f5c400" style="background:#f5c400" aria-label="Giallo"></button>
+    </span>
+    <label class="size">Spessore
+      <input id="size" type="range" min="1" max="10" step="1" value="3">
+    </label>
+    <span class="sep"></span>
+    <button id="btn-undo" class="tb" title="Annulla" disabled>↶ Annulla</button>
+    <button id="btn-redo" class="tb" title="Ripeti" disabled>↷ Ripeti</button>
+    <span class="spacer"></span>
+    <span id="page-ind" class="muted"></span>
+    <button id="btn-export" class="tb accent">⇪ Condividi PDF</button>
+  </header>
+  <div id="viewer"><div id="pages"></div></div>
+  <div id="toast" hidden></div>
+</section>
+
+<script src="lib/pdf-lib.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
