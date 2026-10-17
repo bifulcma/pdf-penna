@@ -1,8 +1,9 @@
 import * as D from './db.js';
 import * as Sync from './sync.js';
 import { buildNotebookPdf, LAYOUT, HL_ALPHA } from './pdfexport.js';
+import * as F from './find.js';
 
-const APP_VERSION = 'v5';
+const APP_VERSION = 'v6';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -167,14 +168,17 @@ async function migrateLegacy() {
 }
 
 // ---------- PDF ----------
-async function pdfAspects(buf) {
+async function pdfAspects(buf, onProgress) {
   // copia: il worker si prende (e svuota) il buffer che riceve, su iOS l'originale resterebbe vuoto
   const doc = await loadPdf(new Uint8Array(buf.slice(0)));
   try {
     const out = [];
     for (let n = 1; n <= doc.numPages; n++) {
-      const vp = (await doc.getPage(n)).getViewport({ scale: 1 });
+      const pg = await doc.getPage(n);
+      const vp = pg.getViewport({ scale: 1 });
       out.push(vp.height / vp.width);
+      pg.cleanup();
+      if (onProgress && n % 25 === 0) onProgress(n, doc.numPages);
     }
     return out;
   } finally { closePdf(doc); }
@@ -287,6 +291,7 @@ async function renderThumb(rec) {
       const vp = page.getViewport({ scale: w / page.getViewport({ scale: 1 }).width });
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
       await page.render({ canvas: cv, canvasContext: ctx, viewport: vp }).promise;
+      page.cleanup();
     } else paintPattern(ctx, rec.type, w, h, 1);
     await paintImages(ctx, rec.images, w);
     paintBlocks(ctx, rec.blocks, w, h);
@@ -317,7 +322,7 @@ function thumbLater(rec, img) {
   setTimeout(async () => { // dopo: l'immagine deve essere già nella pagina
     while (thumbQueue.length) {
       const t = thumbQueue.shift();
-      if (!t.img.isConnected) continue;
+      if (!t.img.isConnected || t.img.vis === false) continue; // miniatura uscita dalla vista: la faccio quando torna
       const url = await thumbUrl(t.rec);
       if (url && t.img.isConnected) { t.img.src = url; t.img.classList.add('ok'); }
     }
@@ -447,20 +452,18 @@ $('pdf-input').onchange = async (e) => {
   try {
     const buf = await readFile(f);
     const n = await D.newNode('notebook', f.name.replace(/\.pdf$/i, ''), lib.cwd);
-    try { await addPdfPages(n.id, buf, f.name, (i) => i); } catch (err) { await D.deleteNode(n); throw err; }
+    const prog = (i, tot) => toast('Apro “' + f.name + '”… pagina ' + i + ' di ' + tot, 0);
+    try { await addPdfPages(n.id, buf, f.name, (i) => i, prog); } catch (err) { await D.deleteNode(n); throw err; }
     Sync.requestSync(); toast('');
     await openNotebook(n.id);
   } catch (err) { toast(''); showError('Il PDF non si apre', err); refreshLibrary(); }
 };
 // crea una pagina per ogni pagina del PDF; order(i, n) decide la posizione
-async function addPdfPages(nbId, buf, name, order) {
-  const asp = await pdfAspects(buf);
+async function addPdfPages(nbId, buf, name, order, onProgress) {
+  const asp = await pdfAspects(buf, onProgress);
   const blob = await D.addBlob(buf, 'application/pdf', name);
-  const recs = [];
-  for (let i = 0; i < asp.length; i++) {
-    const p = D.blankPage(nbId, order(i, asp.length), 'pdf', { blob: blob.id, pdfPage: i, aspect: asp[i] });
-    await D.put('pages', p); recs.push(p);
-  }
+  const recs = asp.map((a, i) => D.blankPage(nbId, order(i, asp.length), 'pdf', { blob: blob.id, pdfPage: i, aspect: a }));
+  await D.putMany('pages', recs);
   return recs;
 }
 
@@ -528,38 +531,69 @@ const nb = { node: null, pages: [], zoom: 1, undo: [], redo: [], drawing: 0 };
 async function openNotebook(id, focusPageId) {
   const node = await D.get('nodes', id);
   if (!node || node.deleted) return;
-  if (nb.node) await flush();
+  if (nb.node) { await flush(); saveLastPage(); }
   nb.node = node; nb.zoom = 1; nb.undo = []; nb.redo = []; updateUndoButtons();
-  closePop();
+  closePop(); resetFind();
+  saveSt.dirty = false; saveSt.at = 0; paintSave();
   library.hidden = true; notebook.hidden = false;
+  // se il caricamento facesse chiudere l'app, alla prossima apertura non riapro questo quaderno da solo
+  openGuard(true);
+  D.setMeta('open', id).catch(() => {});
   setSide(wide() && localStorage.getItem('penna.side') === '1', false);
-  await buildPages();
-  viewer.scrollTop = 0; viewer.scrollLeft = 0;
-  if (focusPageId) { const p = nb.pages.find((x) => x.rec.id === focusPageId); if (p) viewer.scrollTop = p.wrap.offsetTop - topGap(); }
-  updatePageIndicator();
+  if (!(await buildPages())) return;
+  viewer.scrollLeft = 0;
+  let target = null;
+  if (focusPageId) target = { i: nb.pages.findIndex((x) => x.rec.id === focusPageId), f: 0 };
+  else {
+    // riprendo dall'ultima pagina letta
+    const lp = await D.getMeta('lp:' + id).catch(() => null);
+    if (lp && nb.node === node) {
+      let i = nb.pages.findIndex((x) => x.rec.id === lp.id);
+      if (i < 0 && lp.i < nb.pages.length) i = lp.i;
+      if (i >= 0) target = { i, f: Math.max(-0.5, Math.min(1, +lp.f || 0)) };
+      if (i > 0) toast('Riprendi da pagina ' + (i + 1) + ' di ' + nb.pages.length);
+    }
+  }
+  if (target && target.i >= 0) goToPage(target.i, target.f); else { viewer.scrollTop = 0; updatePageIndicator(); }
+  setTimeout(() => openGuard(false), 8000);
+}
+// segno "sto aprendo": tolto appena una pagina è disegnata (o l'app va in secondo piano normalmente)
+let guardOn = false;
+function openGuard(on) {
+  if (on === guardOn) return;
+  guardOn = on;
+  try { on ? localStorage.setItem('penna.opening', '1') : localStorage.removeItem('penna.opening'); } catch {}
 }
 const topGap = () => parseFloat(getComputedStyle(pagesEl).paddingTop) - 8;
 
 function teardownPages() {
-  for (const p of nb.pages) { observer.unobserve(p.wrap); if (p.task) { try { p.task.cancel(); } catch {} } freeCanvas(p.bg); freeCanvas(p.draw); }
-  nb.pages = []; pagesEl.textContent = '';
+  for (const p of nb.pages) { p.dead = true; observer.unobserve(p.wrap); if (p.task) { try { p.task.cancel(); } catch {} } freeCanvas(p.bg); freeCanvas(p.draw); }
+  nb.pages = []; pagesEl.textContent = ''; want.clear();
 }
+// buildSeq: se arriva una seconda richiesta mentre leggo l'archivio, vince l'ultima (niente pagine doppie)
+let buildSeq = 0;
 async function buildPages() {
-  teardownPages();
+  const seq = ++buildSeq;
   const recs = await D.pagesOf(nb.node.id);
+  if (seq !== buildSeq) return false;
+  teardownPages();
   for (const rec of recs) {
     const wrap = el('div', 'page'); wrap.dataset.id = rec.id;
     const bg = el('canvas', 'bg'), imgs = el('div', 'imgs'), txt = el('div', 'txt'), draw = el('canvas', 'draw');
     bg.width = bg.height = draw.width = draw.height = 0;
     wrap.append(bg, imgs, txt, draw);
     pagesEl.append(wrap);
-    const p = { rec, wrap, bg, imgs, txt, draw, aspect: rec.aspect || LAYOUT.a4, rendered: false, task: null, cw: 0, ch: 0, W: 0, H: 0 };
+    const p = { rec, wrap, bg, imgs, txt, draw, aspect: rec.aspect || LAYOUT.a4, rendered: false, task: null, pg: null, cw: 0, ch: 0, W: 0, H: 0 };
+    pageOf.set(wrap, p);
     nb.pages.push(p);
     wrap.classList.toggle('textmode', S.tool === 'text');
+    paintBm(p);
     renderText(p); renderImages(p); attachDrawing(p);
   }
   layout();
   renderSidebar();
+  renderMarks();
+  return true;
 }
 function fitWidth() {
   const cs = getComputedStyle(pagesEl);
@@ -567,6 +601,7 @@ function fitWidth() {
 }
 function layout() {
   const w = fitWidth() * nb.zoom;
+  nb.gap = topGap();
   for (const p of nb.pages) {
     p.cw = w; p.ch = w * p.aspect;
     p.wrap.style.width = w + 'px'; p.wrap.style.height = p.ch + 'px';
@@ -576,12 +611,33 @@ function layout() {
     growAll(p);
   }
 }
+
+// ---------- Disegno delle pagine: solo quelle visibili (anche con PDF da centinaia di pagine) ----------
+// Le pagine vicine allo schermo entrano in "want"; ne disegno al massimo 2 alla volta, prima le più vicine al centro.
+// Durante uno scorrimento molto veloce (o trascinando la barra rapida) aspetto che rallenti: niente lavoro inutile.
+const want = new Set(), pageOf = new WeakMap(); // pageOf: riquadro .page -> dati della pagina
+let pumpTimer = 0, rendering = 0, scrollV = 0, lastScrollT = 0, lastScrollTop = 0, jumped = false;
+function schedule(ms = 0) { if (!pumpTimer) pumpTimer = setTimeout(pump, ms); }
+function pump() {
+  pumpTimer = 0;
+  if (!want.size) return;
+  if (performance.now() - lastScrollT < 140 && scrollV > 2.5) { schedule(90); return; }
+  const mid = viewer.scrollTop + viewer.clientHeight / 2;
+  const dist = (p) => Math.abs(p.wrap.offsetTop + p.ch / 2 - mid);
+  const list = [...want].filter((p) => !p.rendered).sort((a, b) => dist(a) - dist(b));
+  while (rendering < 2 && list.length) {
+    const p = list.shift();
+    rendering++;
+    renderPage(p).catch(() => {}).finally(() => { rendering--; schedule(); });
+  }
+}
 const observer = new IntersectionObserver((entries) => {
   for (const en of entries) {
-    const p = nb.pages.find((x) => x.wrap === en.target);
-    if (!p) continue;
-    if (en.isIntersecting) renderPage(p); else releasePage(p);
+    const p = pageOf.get(en.target);
+    if (!p || p.dead) continue;
+    if (en.isIntersecting) want.add(p); else { want.delete(p); releasePage(p); }
   }
+  schedule();
 }, { root: viewer, rootMargin: (IOS ? 700 : 1200) + 'px 0px' });
 
 // limite di pixel per canvas: iPad/iPhone hanno poca memoria per i canvas (oltre, le pagine restano bianche)
@@ -606,6 +662,7 @@ async function renderPage(p) {
     p.bg.width = p.W; p.bg.height = p.H;
     paintPattern(p.bg.getContext('2d'), p.rec.type, p.W, p.H, Math.max(1, r * 0.8));
     p.wrap.dataset.rendered = '1';
+    openGuard(false);
     return;
   }
   let off = null;
@@ -613,6 +670,7 @@ async function renderPage(p) {
     const pdf = await getPdf(p.rec.blob);
     const page = await pdf.getPage(p.rec.pdfPage + 1);
     if (!p.rendered) return;
+    p.pg = page;
     const base = page.getViewport({ scale: 1 });
     const vp = page.getViewport({ scale: (p.cw / base.width) * r });
     off = document.createElement('canvas'); off.className = 'bg';
@@ -627,6 +685,7 @@ async function renderPage(p) {
     // sostituisco il canvas vecchio solo a lavoro finito: niente pagina bianca durante lo zoom
     const old = p.bg; p.wrap.replaceChild(off, old); freeCanvas(old); p.bg = off; off = null;
     p.wrap.dataset.rendered = '1'; p.wrap.classList.remove('err');
+    openGuard(false);
   } catch (e) {
     freeCanvas(off);
     p.rendered = false;
@@ -640,70 +699,214 @@ function releasePage(p) {
   p.rendered = false;
   if (p.task) { try { p.task.cancel(); } catch {} p.task = null; }
   freeCanvas(p.bg); freeCanvas(p.draw);
+  // pdf.js tiene in memoria i dati della pagina disegnata: li libero quando esce dalla vista
+  if (p.pg) { try { p.pg.cleanup(); } catch {} p.pg = null; }
   delete p.wrap.dataset.rendered;
 }
 
-function currentPage() {
-  const mid = viewer.scrollTop + viewer.clientHeight / 2;
-  let cur = nb.pages[0];
-  for (const p of nb.pages) { if (p.wrap.offsetTop <= mid) cur = p; else break; }
-  return cur;
+// ---------- Pagina corrente, vai a pagina, barra rapida ----------
+// pagina "corrente" = quella che occupa la parte alta dello schermo (dove si legge)
+function pageIndexAt(y) {
+  const ps = nb.pages;
+  let lo = 0, hi = ps.length - 1, ans = 0;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (ps[m].wrap.offsetTop <= y) { ans = m; lo = m + 1; } else hi = m - 1; }
+  return ans;
 }
-let lastCur = null;
+function curIndex() {
+  if (!nb.pages.length) return -1;
+  const top = viewer.scrollTop, h = viewer.clientHeight;
+  if (top > 0 && top + h >= viewer.scrollHeight - 2) return nb.pages.length - 1;
+  const g = nb.gap ?? topGap();
+  return pageIndexAt(top + g + (h - g) * 0.3);
+}
+function currentPage() { return nb.pages[Math.max(0, curIndex())]; }
+// porta la pagina i in alto (f = punto della pagina, in frazioni della sua altezza)
+function goToPage(i, f = 0) {
+  if (!nb.pages.length) return;
+  i = Math.max(0, Math.min(nb.pages.length - 1, i));
+  const p = nb.pages[i];
+  jumped = true;
+  viewer.scrollTop = p.wrap.offsetTop - (nb.gap ?? topGap()) + f * p.ch;
+  updatePageIndicator();
+  saveLastPageSoon();
+}
+let lastCur = -1;
 function updatePageIndicator() {
-  if (!nb.pages.length) { $('page-ind').textContent = ''; return; }
-  const cur = currentPage();
-  $('page-ind').textContent = (nb.pages.indexOf(cur) + 1) + ' / ' + nb.pages.length;
-  if (cur !== lastCur) {
-    lastCur = cur;
-    document.querySelectorAll('#page-list li').forEach((li, i) => li.classList.toggle('cur', nb.pages[i] === cur));
-  }
+  const n = nb.pages.length;
+  if (!n) return;
+  const i = curIndex();
+  $('pg-cur').textContent = i + 1; $('pg-tot').textContent = n;
+  if (i === lastCur) return;
+  const ol = $('page-list');
+  if (ol.children[lastCur]) ol.children[lastCur].classList.remove('cur');
+  if (ol.children[i]) ol.children[i].classList.add('cur');
+  lastCur = i;
+  const bm = !!nb.pages[i].rec.bm;
+  $('btn-bm').classList.toggle('on', bm);
+  $('btn-bm').setAttribute('aria-pressed', String(bm));
+  $('bm-add-lbl').textContent = bm ? 'Modifica il segnalibro di pagina ' + (i + 1) : 'Segna pagina ' + (i + 1);
+  $('btn-prev').disabled = i === 0; $('btn-next').disabled = i === n - 1;
 }
-viewer.addEventListener('scroll', updatePageIndicator, { passive: true });
+let scrollRaf = 0;
+viewer.addEventListener('scroll', () => {
+  const now = performance.now(), top = viewer.scrollTop;
+  // velocità di scorrimento (px/ms): serve a non disegnare pagine che passano di corsa
+  scrollV = jumped ? 0 : Math.abs(top - lastScrollTop) / Math.max(8, now - lastScrollT);
+  jumped = false; lastScrollT = now; lastScrollTop = top;
+  if (scrollRaf) return;
+  scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; updatePageIndicator(); showScrub(); saveLastPageSoon(); });
+}, { passive: true });
 
-// ---------- Barra laterale (pagine) ----------
+// ultima pagina letta (per quaderno, su questo dispositivo)
+let lpTimer = 0;
+function saveLastPage() {
+  clearTimeout(lpTimer); lpTimer = 0;
+  if (!nb.node || !nb.pages.length || notebook.hidden) return;
+  const i = curIndex(), p = nb.pages[i];
+  const f = (viewer.scrollTop - (p.wrap.offsetTop - (nb.gap ?? topGap()))) / (p.ch || 1);
+  D.setMeta('lp:' + nb.node.id, { id: p.rec.id, i, f: Math.round(f * 1000) / 1000 }).catch(() => {});
+}
+function saveLastPageSoon() { clearTimeout(lpTimer); lpTimer = setTimeout(saveLastPage, 600); }
+
+// tocchi sulla barra in basso: il palmo appoggiato mentre si scrive con la Pencil non deve cambiare pagina
+let lastPen = 0, barPointer = '';
+$('pagebar').addEventListener('pointerdown', (e) => { barPointer = e.pointerType; }, true);
+const palmTap = () => barPointer === 'touch' && performance.now() - lastPen < 700;
+$('btn-prev').onclick = () => { if (!palmTap()) goToPage(curIndex() - 1); };
+$('btn-next').onclick = () => { if (!palmTap()) goToPage(curIndex() + 1); };
+$('btn-bm').onclick = () => { if (!palmTap()) bookmarkPage(curIndex()); };
+$('btn-find').onclick = () => { if (!palmTap()) openFind(); };
+$('page-ind').onclick = () => { if (palmTap()) return; if (!gotoEl.hidden) { closePop(); return; } if (justClosed()) return; openGoto(); };
+
+// pannello "Vai a pagina" con tastierino
+const gotoEl = $('goto');
+let gotoVal = '';
+function paintGoto(bad) {
+  const n = nb.pages.length;
+  $('goto-sub').textContent = bad ? 'Scegli da 1 a ' + n : 'di ' + n;
+  $('goto-sub').classList.toggle('bad', !!bad);
+  const v = $('goto-val');
+  v.textContent = gotoVal || String(curIndex() + 1);
+  v.classList.toggle('ph', !gotoVal);
+  const f = $('goto-field');
+  f.classList.remove('bad');
+  if (bad) { void f.offsetWidth; f.classList.add('bad'); }
+}
+function openGoto() {
+  closePop();
+  gotoVal = '';
+  gotoEl.hidden = false; popBack.hidden = false;
+  paintGoto();
+  placePopover(gotoEl, $('page-ind'));
+}
+function gotoKey(k) {
+  if (/^\d$/.test(k)) { if (gotoVal.length < 5) gotoVal = (gotoVal + k).replace(/^0+/, ''); }
+  else if (k === 'del') gotoVal = gotoVal.slice(0, -1);
+  else if (k === 'prev' || k === 'next') { gotoVal = ''; goToPage(curIndex() + (k === 'next' ? 1 : -1)); }
+  else if (k === 'go') {
+    if (!gotoVal) { closePop(); return; }
+    const n = +gotoVal;
+    if (n < 1 || n > nb.pages.length) { gotoVal = ''; paintGoto(true); return; }
+    closePop(); goToPage(n - 1); return;
+  }
+  paintGoto();
+}
+gotoEl.querySelectorAll('.key').forEach((b) => { b.onclick = () => gotoKey(b.dataset.k); });
+
+// barra rapida a destra: compare quando scorri, trascinala per saltare tra centinaia di pagine
+const scrub = $('scrub'), scrubThumb = $('scrub-thumb');
+let scrubHide = 0, scrubDrag = null;
+function scrubFrac() { const max = viewer.scrollHeight - viewer.clientHeight; return max > 0 ? Math.min(1, viewer.scrollTop / max) : 0; }
+function showScrub() {
+  if (nb.pages.length < 4 || viewer.scrollHeight < viewer.clientHeight * 3 || nb.drawing) return;
+  scrub.style.setProperty('--f', String(scrubFrac()));
+  if (scrubDrag) { $('scrub-pg').textContent = 'Pagina ' + (curIndex() + 1); $('scrub-of').textContent = 'di ' + nb.pages.length; }
+  scrub.classList.add('show');
+  clearTimeout(scrubHide);
+  if (!scrubDrag) scrubHide = setTimeout(hideScrub, 1600);
+}
+function hideScrub() { if (!scrubDrag) scrub.classList.remove('show'); }
+scrubThumb.addEventListener('pointerdown', (e) => {
+  if (!scrub.classList.contains('show')) return;
+  e.preventDefault(); e.stopPropagation();
+  scrubDrag = { id: e.pointerId, y: e.clientY, f: scrubFrac(), span: Math.max(1, scrub.clientHeight - scrubThumb.offsetHeight) };
+  try { scrubThumb.setPointerCapture(e.pointerId); } catch {}
+  scrub.classList.add('drag'); showScrub();
+});
+scrubThumb.addEventListener('pointermove', (e) => {
+  if (!scrubDrag || e.pointerId !== scrubDrag.id) return;
+  e.preventDefault();
+  const f = Math.max(0, Math.min(1, scrubDrag.f + (e.clientY - scrubDrag.y) / scrubDrag.span));
+  viewer.scrollTop = f * (viewer.scrollHeight - viewer.clientHeight);
+});
+const endScrub = (e) => {
+  if (!scrubDrag || e.pointerId !== scrubDrag.id) return;
+  scrubDrag = null; scrub.classList.remove('drag');
+  scrubHide = setTimeout(hideScrub, 1200);
+  schedule();
+};
+scrubThumb.addEventListener('pointerup', endScrub);
+scrubThumb.addEventListener('pointercancel', endScrub);
+
+// ---------- Barra laterale: pagine, segnalibri, ricerca ----------
 const wide = () => innerWidth >= 900;
 function setSide(open, remember = true) {
   notebook.classList.toggle('side-open', open);
   if (remember && wide()) { try { localStorage.setItem('penna.side', open ? '1' : '0'); } catch {} }
-  if (open) observeSideThumbs();
   if (wide() && nb.pages.length) {
     const p = currentPage(), off = p ? viewer.scrollTop - p.wrap.offsetTop : 0;
-    layout(); if (p) viewer.scrollTop = p.wrap.offsetTop + off * nb.pages[0].cw / (p.cw || 1);
+    layout(); if (p) { jumped = true; viewer.scrollTop = p.wrap.offsetTop + off * nb.pages[0].cw / (p.cw || 1); }
   }
+  if (open && sideTab === 'pages') { observeSideThumbs(); centerCurThumb(); }
 }
 $('btn-pages').onclick = () => setSide(!notebook.classList.contains('side-open'));
+let sideTab = 'pages';
+function showTab(t) {
+  sideTab = t;
+  document.querySelectorAll('#sidebar .seg button').forEach((b) => { const on = b.dataset.tab === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
+  $('tab-pages').hidden = t !== 'pages'; $('tab-marks').hidden = t !== 'marks'; $('tab-find').hidden = t !== 'find';
+  if (t === 'pages') { observeSideThumbs(); centerCurThumb(); }
+}
+document.querySelectorAll('#sidebar .seg button').forEach((b) => { b.onclick = () => showTab(b.dataset.tab); });
+// con 300 pagine la miniatura della pagina che stai leggendo deve essere già sotto gli occhi
+function centerCurThumb() {
+  const ol = $('page-list'), li = ol.children[Math.max(0, curIndex())];
+  if (li) ol.scrollTop = li.offsetTop - ol.offsetTop - (ol.clientHeight - li.offsetHeight) / 2;
+}
 function pageLabel(p) {
   const h = (p.rec.blocks || []).find((b) => b.type === 'h' && b.text);
   return h ? h.text : TYPE_LABEL[p.rec.type] + (p.rec.type === 'pdf' ? ' · pag. ' + (p.rec.pdfPage + 1) : '');
 }
+// miniature: caricate quando si avvicinano, tolte quando sono lontane (300 immagini in memoria peserebbero troppo)
 const sideObserver = new IntersectionObserver((entries) => {
   for (const en of entries) {
-    if (!en.isIntersecting) continue;
-    sideObserver.unobserve(en.target);
-    const p = nb.pages[+en.target.dataset.i];
-    if (p) thumbLater(p.rec, en.target);
+    const img = en.target;
+    img.vis = en.isIntersecting;
+    if (en.isIntersecting) { if (!img.classList.contains('ok')) { const p = nb.pages[+img.dataset.i]; if (p) thumbLater(p.rec, img); } }
+    else if (img.classList.contains('ok')) { img.removeAttribute('src'); img.classList.remove('ok'); }
   }
-}, { root: $('page-list'), rootMargin: '400px 0px' });
+}, { root: $('page-list'), rootMargin: '600px 0px' });
 function observeSideThumbs() {
   document.querySelectorAll('#page-list img.th:not(.seen)').forEach((img) => { img.classList.add('seen'); sideObserver.observe(img); });
 }
 function renderSidebar() {
   $('side-title').textContent = nb.node.name;
   $('side-count').textContent = plural(nb.pages.length, 'pagina', 'pagine');
-  const ol = $('page-list'); ol.textContent = ''; lastCur = null;
+  const ol = $('page-list');
+  ol.querySelectorAll('img.th').forEach((img) => sideObserver.unobserve(img));
+  ol.textContent = ''; lastCur = -1;
   nb.pages.forEach((p, i) => {
     const li = el('li');
     const go = el('button', 'go'); go.type = 'button'; go.title = pageLabel(p);
     const img = el('img', 'th'); img.alt = ''; img.draggable = false; img.dataset.i = i; img.style.aspectRatio = String(1 / (p.rec.aspect || LAYOUT.a4));
     go.append(img, el('span', 'num', String(i + 1)));
-    go.onclick = () => { viewer.scrollTo({ top: p.wrap.offsetTop - topGap() }); if (!wide()) setSide(false); };
+    go.onclick = () => { goToPage(i); if (!wide()) setSide(false); };
     const mk = (ic, label, fn, dis) => { const b = el('button', 'mini'); b.type = 'button'; b.append(icon(ic)); b.setAttribute('aria-label', label); b.title = label; b.disabled = !!dis; b.onclick = fn; return b; };
     const acts = el('div', 'acts');
     acts.append(mk('up', 'Sposta su', () => movePage(i, -1), i === 0), mk('down', 'Sposta giù', () => movePage(i, 1), i === nb.pages.length - 1), mk('trash', 'Elimina pagina', () => removePage(i)));
     li.append(go, acts); ol.append(li);
   });
-  if (notebook.classList.contains('side-open')) observeSideThumbs();
+  if (notebook.classList.contains('side-open') && sideTab === 'pages') observeSideThumbs();
   updatePageIndicator();
 }
 // dopo un salvataggio aggiorno la miniatura della pagina nella barra (se è aperta)
@@ -715,6 +918,168 @@ function refreshSideThumbs(recs) {
     for (const r of recs) { const i = nb.pages.findIndex((p) => p.rec === r); const img = document.querySelector(`#page-list img.th[data-i="${i}"]`); if (img) thumbLater(r, img); }
   }, 600);
 }
+
+// ---------- Segnalibri (con nome, salvati nella pagina: seguono riordino e sincronizzazione) ----------
+function paintBm(p) { p.wrap.classList.toggle('bm', !!p.rec.bm); }
+async function bookmarkPage(i) {
+  const p = nb.pages[i];
+  if (!p) return;
+  const n = i + 1;
+  if (!p.rec.bm) {
+    const r = await modal({ title: 'Segnalibro a pagina ' + n, text: 'Dagli un nome per ritrovarla subito, per esempio “Capitolo 3” o “Firma”.', input: 'Pagina ' + n,
+      options: [{ label: 'Aggiungi segnalibro', value: 'ok', accent: true }] });
+    if (!r) return;
+    p.rec.bm = { name: r.text.trim() || 'Pagina ' + n, t: Date.now() };
+    toast('Segnalibro aggiunto a pagina ' + n);
+  } else {
+    const r = await modal({ title: p.rec.bm.name, text: 'Segnalibro a pagina ' + n, options: [
+      { label: 'Vai alla pagina', value: 'go', icon: 'open' }, { label: 'Rinomina', value: 'ren', icon: 'edit' }, { label: 'Togli il segnalibro', value: 'del', danger: true, icon: 'trash' }] });
+    if (!r) return;
+    if (r.value === 'go') { goToPage(i); if (!wide()) setSide(false); return; }
+    if (r.value === 'ren') {
+      const q = await modal({ title: 'Rinomina segnalibro', input: p.rec.bm.name, options: [{ label: 'Salva', value: 'ok', accent: true }] });
+      if (!q || !q.text.trim()) return;
+      p.rec.bm = { ...p.rec.bm, name: q.text.trim() };
+    } else { delete p.rec.bm; toast('Segnalibro tolto da pagina ' + n); }
+  }
+  paintBm(p); queueSave(p.rec); renderMarks();
+  lastCur = -1; updatePageIndicator();
+}
+function renderMarks() {
+  const ul = $('bm-list'); ul.textContent = '';
+  const list = [];
+  nb.pages.forEach((p, i) => { if (p.rec.bm) list.push([p, i]); });
+  $('bm-empty').hidden = list.length > 0;
+  for (const [p, i] of list) {
+    const li = el('li'), go = el('button', 'row-go'); go.type = 'button';
+    const tx = el('span', 'tx'); tx.append(el('b', '', p.rec.bm.name));
+    if (p.rec.bm.name !== 'Pagina ' + (i + 1)) tx.append(el('span', 's', 'Pagina ' + (i + 1)));
+    go.append(icon('bookmark', 'ic bmk'), tx);
+    go.onclick = () => { goToPage(i); if (!wide()) setSide(false); };
+    const more = el('button', 'mini'); more.type = 'button'; more.append(icon('more'));
+    more.setAttribute('aria-label', 'Modifica il segnalibro ' + p.rec.bm.name);
+    more.onclick = () => bookmarkPage(i);
+    li.append(go, more); ul.append(li);
+  }
+}
+$('btn-bm-add').onclick = () => bookmarkPage(curIndex());
+
+// ---------- Ricerca nel testo del PDF (e nelle note) ----------
+// Il testo di ogni pagina si legge una volta con pdf.js e resta salvato (meta "tx:<pdf>"): la seconda ricerca è immediata.
+const textMem = new Map(); // id del PDF -> Map(pagina -> testo)
+const findSt = { gen: 0, marks: [], sel: null };
+async function pdfText(rec, touched) {
+  let m = textMem.get(rec.blob);
+  if (!m) {
+    m = new Map(); textMem.set(rec.blob, m);
+    const saved = await D.getMeta('tx:' + rec.blob).catch(() => null);
+    if (Array.isArray(saved)) saved.forEach((s, i) => { if (typeof s === 'string') m.set(i, s); });
+  }
+  if (m.has(rec.pdfPage)) return m.get(rec.pdfPage);
+  const pdf = await getPdf(rec.blob);
+  const page = await pdf.getPage(rec.pdfPage + 1);
+  const tc = await page.getTextContent();
+  page.cleanup();
+  const str = F.joinItems(tc.items).str;
+  m.set(rec.pdfPage, str); touched.add(rec.blob);
+  return str;
+}
+async function pageText(rec, touched) {
+  const notes = (rec.blocks || []).map(blockText).filter(Boolean).join('\n');
+  if (rec.type !== 'pdf') return notes;
+  const t = await pdfText(rec, touched);
+  return notes ? t + '\n' + notes : t;
+}
+function setFindStatus(t) { $('find-status').textContent = t; $('find-status').hidden = !t; }
+function clearFindMarks() { for (const m of findSt.marks) m.remove(); findSt.marks = []; }
+function resetFind() {
+  findSt.gen++; clearFindMarks();
+  $('find-input').value = ''; $('find-list').textContent = '';
+  setFindStatus('Scrivi una parola: la cerco in tutte le pagine del PDF e nelle tue note.');
+}
+async function runFind(raw) {
+  const q = F.fold(raw), gen = ++findSt.gen;
+  clearFindMarks();
+  const list = $('find-list'); list.textContent = '';
+  if (q.length < 2) { setFindStatus(raw.trim() ? 'Scrivi almeno 2 lettere.' : 'Scrivi una parola: la cerco in tutte le pagine del PDF e nelle tue note.'); return; }
+  const pages = nb.pages.slice(), total = pages.length, MAX = 300, touched = new Set();
+  let hits = 0, hitPages = 0, shown = 0, missing = 0;
+  setFindStatus('Cerco…');
+  for (let i = 0; i < total; i++) {
+    const p = pages[i];
+    let str;
+    try { str = await pageText(p.rec, touched); } catch (e) { missing++; continue; }
+    if (gen !== findSt.gen) return;
+    const found = F.findAll(F.foldMap(str), q, 60);
+    if (found.length) {
+      hitPages++; hits += found.length;
+      for (const [a, b] of found) { if (shown < MAX) { addFindHit(list, p.rec.id, i, str, a, b); shown++; } }
+    }
+    if (i % 12 === 11 && i < total - 1) {
+      setFindStatus('Cerco… pagina ' + (i + 1) + ' di ' + total + (hits ? ' · ' + plural(hits, 'risultato', 'risultati') : ''));
+      await new Promise((r) => setTimeout(r, 0));
+      if (gen !== findSt.gen) return;
+    }
+  }
+  for (const id of touched) { const m = textMem.get(id); const arr = []; m.forEach((s, k) => { arr[k] = s; }); D.setMeta('tx:' + id, arr).catch(() => {}); }
+  setFindStatus(hits ? plural(hits, 'risultato', 'risultati') + ' in ' + plural(hitPages, 'pagina', 'pagine') + (hits > shown ? ' · mostro i primi ' + shown : '')
+    : 'Nessun risultato per “' + raw.trim() + '”.' + (missing ? ' (Alcune pagine non sono ancora arrivate da OneDrive.)' : ' Se il PDF è una scansione (foto delle pagine) non contiene testo da cercare.'));
+}
+function addFindHit(list, id, i, str, a, b) {
+  const li = el('li'), btn = el('button', 'row-go fhit'); btn.type = 'button';
+  const sn = F.snippet(str, a, b), s = el('span', 'snip');
+  s.append(sn.pre, el('mark', '', sn.hit), sn.post);
+  const tx = el('span', 'tx'); tx.append(el('b', '', 'Pagina ' + (i + 1)), s);
+  btn.append(tx);
+  btn.onclick = () => openHit(btn, id, a, b);
+  li.append(btn); list.append(li);
+}
+async function openHit(btn, id, a, b) {
+  if (findSt.sel) findSt.sel.classList.remove('sel');
+  findSt.sel = btn; btn.classList.add('sel');
+  const i = nb.pages.findIndex((x) => x.rec.id === id);
+  if (i < 0) return;
+  const p = nb.pages[i];
+  goToPage(i);
+  if (!wide()) setSide(false);
+  clearFindMarks();
+  if (p.rec.type !== 'pdf') return;
+  try {
+    const pdf = await getPdf(p.rec.blob);
+    const page = await pdf.getPage(p.rec.pdfPage + 1);
+    const tc = await page.getTextContent();
+    // larghezza vera delle lettere (una "m" è più larga di una "i"): il riquadro cade proprio sulla parola
+    const mctx = document.createElement('canvas').getContext('2d');
+    const measure = (str, it) => { const st = tc.styles[it.fontName]; mctx.font = '100px ' + ((st && st.fontFamily) || 'sans-serif'); return mctx.measureText(str).width; };
+    const rects = F.hitRects(F.joinItems(tc.items).pos, a, b, page.getViewport({ scale: 1 }), measure);
+    if (!rects.length || p.dead) return;
+    for (const r of rects) {
+      const m = el('i', 'find-mark');
+      m.style.left = r.l * 100 + '%'; m.style.top = r.t * 100 + '%'; m.style.width = r.w * 100 + '%'; m.style.height = r.h * 100 + '%';
+      p.wrap.append(m); findSt.marks.push(m);
+    }
+    // la parola trovata a un terzo dello schermo (e in vista anche se la pagina è ingrandita)
+    jumped = true;
+    viewer.scrollTop = Math.max(0, p.wrap.offsetTop + rects[0].t * p.ch - viewer.clientHeight * 0.35);
+    if (p.cw > viewer.clientWidth) viewer.scrollLeft = Math.max(0, p.wrap.offsetLeft + rects[0].l * p.cw - viewer.clientWidth * 0.3);
+  } catch (e) { if (!e || e.name !== 'NoData') console.warn('evidenziazione', e); }
+}
+function openFind() {
+  setSide(true); showTab('find');
+  const inp = $('find-input'); inp.focus(); inp.select();
+}
+let findTimer;
+$('find-input').addEventListener('input', () => {
+  clearTimeout(findTimer);
+  findSt.gen++; // una ricerca ancora in corso si ferma: i risultati vecchi non valgono più
+  if (F.fold($('find-input').value).length >= 2) setFindStatus('Cerco…');
+  findTimer = setTimeout(() => runFind($('find-input').value), 350);
+});
+$('find-input').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault(); clearTimeout(findTimer); runFind($('find-input').value); e.target.blur();
+});
+
 async function movePage(i, d) {
   await flush();
   const a = nb.pages[i].rec, b = nb.pages[i + d].rec;
@@ -921,7 +1286,12 @@ let resizeTimer;
 window.addEventListener('resize', () => {
   closePop();
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { if (nb.pages.length && !notebook.hidden) layout(); }, 120);
+  // girando l'iPad resto sulla stessa pagina (e nello stesso punto della pagina)
+  resizeTimer = setTimeout(() => {
+    if (!nb.pages.length || notebook.hidden) return;
+    const i = curIndex(), p = nb.pages[i], f = (viewer.scrollTop - (p.wrap.offsetTop - nb.gap)) / (p.ch || 1);
+    layout(); goToPage(i, f);
+  }, 120);
 });
 
 // ---------- Disegno ----------
@@ -997,7 +1367,9 @@ function attachDrawing(p) {
     if (S.tool === 'text' || !allowed(e) || pid !== null) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
-    if (!pop.hidden) closePop();
+    if (!pop.hidden || !gotoEl.hidden) closePop();
+    if (e.pointerType === 'pen') lastPen = performance.now();
+    clearTimeout(scrubHide); scrub.classList.remove('show');
     pid = e.pointerId; nb.drawing = 1;
     try { c.setPointerCapture(pid); } catch {}
     const [x, y] = norm(e);
@@ -1011,6 +1383,7 @@ function attachDrawing(p) {
   c.addEventListener('pointermove', (e) => {
     if (e.pointerId !== pid) return;
     e.preventDefault();
+    if (e.pointerType === 'pen') lastPen = performance.now();
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     for (const ev of (evs.length ? evs : [e])) {
       const [x, y] = norm(ev);
@@ -1027,6 +1400,7 @@ function attachDrawing(p) {
   const finish = (e) => {
     if (e.pointerId !== pid) return;
     pid = null; nb.drawing = 0;
+    if (e.pointerType === 'pen') lastPen = performance.now();
     try { c.releasePointerCapture(e.pointerId); } catch {}
     if (S.tool === 'eraser') {
       if (erased && erased.length) { queueSave(p.rec); pushAction({ type: 'del', items: erased }); }
@@ -1082,30 +1456,111 @@ function redo() { const a = nb.redo.pop(); if (!a) return; applyRedo(a); nb.undo
 $('btn-undo').onclick = undo;
 $('btn-redo').onclick = redo;
 document.addEventListener('keydown', (e) => {
-  if (notebook.hidden || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+  if (notebook.hidden || $('dlg').open || $('settings').open) return;
+  const k = e.key, cmd = e.metaKey || e.ctrlKey;
+  if (!gotoEl.hidden) { // tastiera fisica nel pannello "Vai a pagina"
+    if (/^\d$/.test(k)) gotoKey(k); else if (k === 'Backspace') gotoKey('del'); else if (k === 'Enter') gotoKey('go'); else if (k === 'Escape') closePop(); else return;
+    e.preventDefault(); return;
+  }
+  if (cmd && k.toLowerCase() === 's') { e.preventDefault(); saveNow(); return; }
+  if (cmd && k.toLowerCase() === 'f') { e.preventDefault(); openFind(); return; }
   if (e.target.closest && e.target.closest('input, textarea')) return;
-  e.preventDefault(); e.shiftKey ? redo() : undo();
+  if (cmd && k.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (!cmd && (k === 'ArrowRight' || k === 'ArrowLeft') && viewer.scrollWidth <= viewer.clientWidth + 2) { e.preventDefault(); goToPage(curIndex() + (k === 'ArrowRight' ? 1 : -1)); }
 });
 
-// ---------- Salvataggio automatico ----------
+// ---------- Salvataggio (automatico + tasto Salva) ----------
+// Ogni modifica si salva da sola poco dopo (al massimo ~2,5 s anche scrivendo senza pause).
+// In barra: "Modifiche non salvate" finché c'è qualcosa in sospeso, poi "Salvato alle 19:42".
 const pending = new Set();
-let saveTimer = null, saving = Promise.resolve();
+const saveSt = { dirty: false, at: 0 };
+let saveTimer = null, firstPending = 0, saving = Promise.resolve();
+const hhmm = (t) => new Date(t).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+function paintSave() {
+  const s = $('save-state'), d = saveSt.dirty;
+  s.dataset.state = d ? 'dirty' : 'saved';
+  s.querySelector('.long').textContent = d ? 'Modifiche non salvate' : saveSt.at ? 'Salvato alle ' + hhmm(saveSt.at) : 'Salvato';
+  s.querySelector('.short').textContent = d ? 'Non salvato' : 'Salvato';
+  s.title = s.querySelector('.long').textContent;
+  $('btn-save').classList.toggle('dirty', d);
+  $('btn-save').setAttribute('aria-label', d ? 'Salva (ci sono modifiche non salvate)' : 'Salva');
+}
 function queueSave(rec) {
   pending.add(rec);
+  if (!saveSt.dirty) { saveSt.dirty = true; paintSave(); }
+  const now = Date.now();
+  if (!firstPending) firstPending = now;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(flush, 300);
+  saveTimer = setTimeout(flush, Math.max(0, Math.min(600, firstPending + 2500 - now)));
 }
 function flush() {
-  clearTimeout(saveTimer); saveTimer = null;
+  clearTimeout(saveTimer); saveTimer = null; firstPending = 0;
   const list = [...pending]; pending.clear();
   if (!list.length) return saving;
   saving = saving.then(async () => { for (const r of list) await D.savePage(r); Sync.requestSync(); refreshSideThumbs(list); })
+    .then(() => { if (!pending.size && !saveTimer) { saveSt.dirty = false; saveSt.at = Date.now(); paintSave(); } })
     .catch((e) => showError('Salvataggio non riuscito', e));
   return saving;
 }
 Sync.hooks.flush = flush;
-document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
-window.addEventListener('pagehide', () => flush());
+document.addEventListener('visibilitychange', () => { if (document.hidden) { flush(); saveLastPage(); openGuard(false); } });
+window.addEventListener('pagehide', () => { flush(); saveLastPage(); openGuard(false); });
+
+// tasto Salva: scrive subito sul dispositivo e, se OneDrive è collegato, invia subito
+async function saveNow() {
+  if (!nb.node) return;
+  const btn = $('btn-save');
+  await flush();
+  saveLastPage();
+  await D.setMetaStrict('saved', Date.now()).catch(() => {});
+  saveSt.dirty = pending.size > 0; saveSt.at = Date.now(); paintSave();
+  btn.classList.remove('done'); void btn.offsetWidth; btn.classList.add('done');
+  const msg = 'Salvato ✓ alle ' + hhmm(saveSt.at);
+  if (!Sync.isConnected()) { toast(msg); return; }
+  toast(msg + ' · invio a OneDrive…', 0);
+  const res = await syncAndWait(20000);
+  toast(msg + ({ idle: ' · copiato su OneDrive', offline: ' · sei offline: lo invio a OneDrive appena torna la rete', error: ' · OneDrive: ' + Sync.status.msg }[res] || ' · invio a OneDrive in corso'), 4500);
+}
+function syncAndWait(ms) {
+  return new Promise((resolve) => {
+    let done = false, seen = false, t = 0;
+    const h = (st) => { if (st.state === 'syncing') seen = true; else if (seen || st.state !== 'idle') fin(st.state); };
+    const fin = (v) => { if (done) return; done = true; Sync.offStatus(h); clearTimeout(t); resolve(v); };
+    t = setTimeout(() => fin('timeout'), ms);
+    Sync.onStatus(h);
+    Sync.syncNow();
+  });
+}
+$('btn-save').onclick = saveNow;
+$('btn-save-menu').onclick = async () => {
+  const conn = Sync.isConnected();
+  const r = await modal({ title: 'Salva ed esporta',
+    text: (saveSt.dirty ? 'Ci sono modifiche non ancora salvate.' : saveSt.at ? 'Salvato alle ' + hhmm(saveSt.at) + '.' : 'È tutto salvato.') + ' Le modifiche si salvano anche da sole mentre scrivi' + (conn ? ' e vanno su OneDrive.' : '.'),
+    options: [{ label: 'Salva ora', value: 'save', icon: 'save' }, { label: 'Esporta PDF con annotazioni', value: 'export', icon: 'share' }, { label: 'Salva una copia del quaderno', value: 'copy', icon: 'dup' }] });
+  if (!r) return;
+  if (r.value === 'save') saveNow(); else if (r.value === 'export') exportPdf(); else copyNotebook();
+};
+
+// "Salva copia": un nuovo quaderno uguale, con tutte le annotazioni (il PDF originale non viene duplicato)
+async function copyNotebook() {
+  await flush();
+  const src = nb.node;
+  const r = await modal({ title: 'Salva una copia', text: 'Crea un nuovo quaderno identico a questo, con tutte le annotazioni. Lo trovi nella libreria.', input: src.name + ' (copia)',
+    options: [{ label: 'Salva copia', value: 'ok', accent: true }] });
+  if (!r) return;
+  const n = await D.newNode('notebook', r.text.trim() || src.name + ' (copia)', src.parent);
+  n.color = src.color; await D.put('nodes', n);
+  const now = Date.now();
+  const copies = (await D.pagesOf(src.id)).map((p) => {
+    const c = JSON.parse(JSON.stringify(p));
+    delete c.etag; c.id = D.uid(); c.nb = n.id; c.updated = now; c.dirty = 1;
+    return c;
+  });
+  await D.putMany('pages', copies);
+  Sync.requestSync();
+  toast('Copia salvata nella libreria: “' + n.name + '”', 3500);
+  return n;
+}
 
 // ---------- Strumenti e pannello colore/spessore ----------
 const pop = $('pop'), popBack = $('pop-backdrop');
@@ -1167,22 +1622,23 @@ function paintPop() {
   if (hl) setSlider('sl-alpha', (o.alpha - 0.1) / 0.8);
   paintColorChip(); paintPreview();
 }
-function closePop() { pop.hidden = true; popBack.hidden = true; popAnchor = null; }
-function placePop() {
-  if (!popAnchor) return;
-  const r = popAnchor.getBoundingClientRect();
-  const w = pop.offsetWidth, h = pop.offsetHeight;
+function closePop() { pop.hidden = true; gotoEl.hidden = true; popBack.hidden = true; popAnchor = null; }
+// pannello a comparsa vicino al pulsante: sotto se il pulsante è in alto, sopra se è in basso
+function placePopover(box, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const w = box.offsetWidth, h = box.offsetHeight;
   const left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2));
   const above = r.top > innerHeight / 2;
   const top = above ? Math.max(8, r.top - h - 12) : r.bottom + 12;
-  pop.classList.toggle('above', above);
-  pop.style.left = left + 'px'; pop.style.top = top + 'px';
-  pop.style.setProperty('--ax', Math.max(22, Math.min(w - 22, r.left + r.width / 2 - left)) + 'px');
+  box.classList.toggle('above', above);
+  box.style.left = left + 'px'; box.style.top = top + 'px';
+  box.style.setProperty('--ax', Math.max(22, Math.min(w - 22, r.left + r.width / 2 - left)) + 'px');
 }
 function openPop(anchor) {
+  closePop();
   popAnchor = anchor;
   pop.hidden = false; popBack.hidden = false;
-  paintPop(); placePop();
+  paintPop(); placePopover(pop, anchor);
 }
 function makeSlider(id, get, set) {
   const s = $(id);
@@ -1231,6 +1687,8 @@ paintColorChip();
 async function closeNotebook() {
   closePop();
   await flush();
+  saveLastPage();
+  D.setMeta('open', null).catch(() => {});
   teardownPages();
   releasePdfs();
   nb.node = null;
@@ -1240,7 +1698,7 @@ async function closeNotebook() {
 $('btn-back').onclick = closeNotebook;
 
 // ---------- Esporta PDF ----------
-async function exportBytes() {
+async function exportBytes(onProgress) {
   await flush();
   const recs = await D.pagesOf(nb.node.id);
   const blobs = new Map();
@@ -1249,30 +1707,44 @@ async function exportBytes() {
       if (id && !blobs.has(id)) { const b = await D.get('blobs', id); if (b) blobs.set(id, b); }
     }
   }
-  return buildNotebookPdf(recs, blobs);
+  return buildNotebookPdf(recs, blobs, onProgress);
 }
-$('btn-export').onclick = async () => {
-  const btn = $('btn-export');
-  btn.disabled = true;
-  toast('Preparo il PDF…', 0);
+let exporting = false;
+async function exportPdf() {
+  if (exporting || !nb.node) return;
+  exporting = true;
+  toast('Preparo il PDF con le annotazioni…', 0);
+  const t0 = performance.now();
   try {
-    const bytes = await exportBytes();
+    const bytes = await exportBytes((i, n) => toast('Preparo il PDF… pagina ' + i + ' di ' + n, 0));
     const name = nb.node.name.replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
     const file = new File([bytes], name, { type: 'application/pdf' });
-    toast(''); btn.disabled = false;
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: name }); return; }
-      catch (err) { if (err && err.name === 'AbortError') return; }
+    toast('');
+    const canShare = navigator.canShare && navigator.canShare({ files: [file] });
+    // Safari apre "Condividi" solo subito dopo un tocco: se preparare il PDF ha richiesto tempo, chiedo un tocco in più
+    let how = canShare && performance.now() - t0 < 900 ? 'share' : null;
+    for (let tries = 0; tries < 2; tries++) {
+      if (!how) {
+        const r = await modal({ title: 'Il PDF è pronto', text: name + ' · ' + (bytes.length / 1048576).toFixed(1).replace('.', ',') + ' MB',
+          options: [...(canShare ? [{ label: 'Condividi o salva in File', value: 'share', accent: true }] : []), { label: 'Scarica', value: 'dl', icon: 'save' }] });
+        if (!r) return;
+        how = r.value;
+      }
+      if (how === 'share') {
+        try { await navigator.share({ files: [file], title: name }); return; }
+        catch (err) { if (err && err.name === 'AbortError') return; how = null; continue; }
+      }
+      break;
     }
     const url = URL.createObjectURL(file);
     const a = document.createElement('a');
     a.href = url; a.download = name;
     document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
     toast('PDF scaricato');
   } catch (err) { toast(''); showError('Non riesco a creare il PDF', err); }
-  finally { btn.disabled = false; }
-};
+  finally { exporting = false; }
+}
 
 // ---------- Stato della sincronizzazione e impostazioni ----------
 function renderSync() {
@@ -1339,14 +1811,26 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) $('update-bar').hidden = false; });
   $('btn-update').onclick = async () => { await flush(); location.reload(); };
 }
+// riapro il quaderno che era aperto (Safari su iPad chiude spesso le app in secondo piano)
+async function resumeLast() {
+  let guard = null;
+  try { guard = localStorage.getItem('penna.opening'); localStorage.removeItem('penna.opening'); } catch {}
+  if (guard) return; // l'ultima apertura non è arrivata in fondo (app chiusa di colpo?): meglio non riprovare da solo
+  const id = await D.getMeta('open');
+  if (!id || !notebook.hidden) return;
+  const n = await D.get('nodes', id);
+  if (n && !n.deleted) await openNotebook(id);
+}
 (async () => {
   try {
     await migrateLegacy();
     await refreshLibrary();
+    await resumeLast();
   } catch (e) { showError('Avvio', e); }
   renderSync();
   await Sync.init();
 })();
 
 // Appigli per i test automatici
-window.__penna = { D, Sync, S, nb, lib, openNotebook, refreshLibrary, exportBytes, flush, buildPages, setTool, runSearch, pdfjs, thumbUrl, version: APP_VERSION };
+window.__penna = { D, Sync, S, nb, lib, openNotebook, refreshLibrary, exportBytes, flush, buildPages, setTool, runSearch, pdfjs, thumbUrl, version: APP_VERSION,
+  goToPage, curIndex, saveNow, saveSt, copyNotebook, runFind, closeNotebook, want, stats: () => ({ rendering, want: want.size, drawn: nb.pages.filter((p) => p.bg.width > 0).length }) };

@@ -11,68 +11,8 @@ const SHOTS = OUT + '/shots'; fs.mkdirSync(SHOTS, { recursive: true });
 let pass = 0, fail = 0;
 const ok = (name, cond, extra = '') => { cond ? pass++ : fail++; console.log((cond ? 'OK   ' : 'FAIL ') + name + (!cond && extra !== '' ? '  — ' + extra : '')); };
 
-// ---------- API che Safari 16.4/17 non ha: le tolgo prima di ogni script (pagina e worker) ----------
-const STRIP = `(function(g){const del=(o,k)=>{try{delete o[k]}catch(e){}};
-del(Promise,'withResolvers');del(Promise,'try');
-const IP=Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
-for(const k of ['map','filter','take','drop','flatMap','reduce','toArray','forEach','some','every','find'])del(IP,k);del(g,'Iterator');
-for(const k of ['toHex','toBase64','setFromHex','setFromBase64'])del(Uint8Array.prototype,k);del(Uint8Array,'fromHex');del(Uint8Array,'fromBase64');
-del(g,'Float16Array');del(Math,'f16round');del(Math,'sumPrecise');
-for(const C of [Map,WeakMap]){del(C.prototype,'getOrInsert');del(C.prototype,'getOrInsertComputed');}
-del(URL,'parse');del(RegExp,'escape');del(ArrayBuffer.prototype,'transfer');del(ArrayBuffer.prototype,'transferToFixedLength');
-del(Object,'groupBy');del(Map,'groupBy');if(g.AbortSignal)del(AbortSignal,'any');del(Error,'isError');
-for(const k of ['union','intersection','difference','symmetricDifference','isSubsetOf','isSupersetOf','isDisjointFrom'])del(Set.prototype,k);
-if(g.ReadableStream){del(ReadableStream.prototype,Symbol.asyncIterator);del(ReadableStream.prototype,'values');del(ReadableStream,'from');}
-for(const C of [g.Response,g.Request,g.Blob])if(C)del(C.prototype,'bytes');del(g,'ImageDecoder');g.__stripped=true;})(typeof self!=='undefined'?self:globalThis);\n`;
-
-// Browser con le richieste di polyfills.js intercettate: 'strip' = API tolte + nostri polyfill; 'nopoly' = API tolte e basta
-async function browser(port, mode) {
-  const P = await launch(port); await P.init();
-  P.polyHits = 0;
-  if (mode) {
-    await P.send('Network.setBypassServiceWorker', { bypass: true });
-    await P.send('Fetch.enable', { patterns: [{ urlPattern: '*polyfills.js*', requestStage: 'Response' }] });
-    const orig = fs.readFileSync(new URL('../polyfills.js', import.meta.url), 'utf8');
-    P.handlers.push(async (d) => {
-      if (d.method !== 'Fetch.requestPaused') return;
-      P.polyHits++;
-      const body = STRIP + (mode === 'nopoly' ? '' : orig);
-      await P.send('Fetch.fulfillRequest', { requestId: d.params.requestId, responseCode: 200,
-        responseHeaders: [{ name: 'Content-Type', value: 'text/javascript' }, { name: 'Cache-Control', value: 'no-store' }],
-        body: Buffer.from(body).toString('base64') });
-    });
-  }
-  // UA=ipad: mi presento come Safari su iPad (attiva i limiti di memoria pensati per iPad/iPhone)
-  if (process.env.UA === 'ipad') await P.send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (iPad; CPU OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1', platform: 'iPad' });
-  await P.send('Page.setInterceptFileChooserDialog', { enabled: true });
-  P.chooser = 0;
-  P.handlers.push((d) => { if (d.method === 'Page.fileChooserOpened') P.chooser++; });
-  return P;
-}
-async function device(P, w, h, dpr = 2) {
-  await P.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: dpr, mobile: true });
-  await P.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
-  await sleep(300);
-}
-const rect = (P, sel) => P.eval(`const e=document.querySelector(${JSON.stringify(sel)}); if(!e) return null; const r=e.getBoundingClientRect(); return {x:r.x,y:r.y,w:r.width,h:r.height,cx:r.x+r.width/2,cy:r.y+r.height/2}`);
-const touch = (P, type, x, y) => P.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 8, radiusY: 8, force: 1 }] });
-async function tapXY(P, x, y) { await touch(P, 'touchStart', x, y); await sleep(50); await touch(P, 'touchEnd', x, y); await sleep(220); }
-async function tap(P, sel) { const r = await rect(P, sel); if (!r) throw new Error('manca ' + sel); await tapXY(P, r.cx, r.cy); }
-// il punto centrale del pulsante deve essere davvero il pulsante (non coperto da canvas/barre)
-const reachable = (P, sel) => P.eval(`const e=document.querySelector(${JSON.stringify(sel)}); const r=e.getBoundingClientRect(); const h=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2); return !!h && (h===e || e.contains(h))`);
-async function pen(P, pts) {
-  const [x0, y0] = pts[0];
-  await P.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: x0, y: y0, button: 'left', buttons: 1, clickCount: 1, pointerType: 'pen', force: 0.6 });
-  for (const [x, y] of pts.slice(1)) { await P.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1, pointerType: 'pen', force: 0.6 }); await sleep(6); }
-  const [xl, yl] = pts[pts.length - 1];
-  await P.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: xl, y: yl, button: 'left', buttons: 0, clickCount: 1, pointerType: 'pen' });
-  await sleep(120);
-}
+import { STRIP, browser, device, rect, touch, tapXY, tap, reachable, pen, strokes, small, pixels } from './touch.mjs';
 async function shot(P, name) { const r = await P.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(`${SHOTS}/${name}.png`, Buffer.from(r.data, 'base64')); }
-const strokes = (P, i = 0) => P.eval(`return __penna.nb.pages[${i}].rec.strokes.length`);
-const small = (P) => P.eval(`return [...document.querySelectorAll('button, label.pill, label.ib, .slider')].filter(e=>{const r=e.getBoundingClientRect(); if(!r.width||!r.height||!e.offsetParent) return false; if(getComputedStyle(e).visibility==='hidden') return false; return r.width<43.5||r.height<43.5}).map(e=>(e.id||e.className)+':'+Math.round(e.getBoundingClientRect().width)+'x'+Math.round(e.getBoundingClientRect().height))`);
-// pixel scuri e colorati su un canvas (per capire se il PDF è stato disegnato davvero)
-const pixels = (P, sel) => P.eval(`const c=document.querySelector(${JSON.stringify(sel)}); if(!c||!c.width) return {dark:0,color:0}; const d=c.getContext('2d').getImageData(0,0,c.width,c.height).data; let dark=0,color=0; for(let i=0;i<d.length;i+=16){const r=d[i],g=d[i+1],b=d[i+2]; if(r<90&&g<90&&b<90)dark++; if(Math.max(r,g,b)-Math.min(r,g,b)>70)color++;} return {dark,color}`);
 
 // ---------- PDF di prova: 5 pagine stampate da Chrome (font veri, foto JPEG, grafica vettoriale), una ruotata ----------
 async function makeFixtures(P) {
@@ -153,7 +93,7 @@ try {
   await P.eval(`document.getElementById('viewer').scrollTop = 0; return 1`); await sleep(500);
   await shot(P, 'ipad-editor-pdf');
   // ogni pulsante della barra: raggiungibile (non coperto) e >= 44px
-  for (const sel of ['#btn-back', '#btn-pages', '#tool-pen', '#tool-hl', '#tool-eraser', '#tool-text', '#btn-color', '#btn-undo', '#btn-redo', '#btn-export', 'label.ib.filebtn'])
+  for (const sel of ['#btn-back', '#btn-pages', '#tool-pen', '#tool-hl', '#tool-eraser', '#tool-text', '#btn-color', '#btn-undo', '#btn-redo', '#btn-save', '#btn-save-menu', '#btn-find', '#btn-prev', '#page-ind', '#btn-next', '#btn-bm'])
     ok('iPad: ' + sel + ' raggiungibile al tocco', await reachable(P, sel));
   ok('iPad editor: tutti i comandi >= 44px', (await small(P)).length === 0, JSON.stringify(await small(P)));
 
@@ -224,7 +164,7 @@ try {
   await shot(P, 'ipad-sidebar');
   await P.eval(`document.querySelector('#page-list li:nth-child(4)').scrollIntoView({block:'center'}); return 1`); await sleep(300);
   await tap(P, '#page-list li:nth-child(4) .go'); await sleep(700);
-  ok('tocco miniatura 4 → va alla pagina 4', /^4 \//.test(await P.eval(`return document.getElementById('page-ind').textContent`)), await P.eval(`return document.getElementById('page-ind').textContent`));
+  ok('tocco miniatura 4 → va alla pagina 4', (await P.eval(`return document.getElementById('pg-cur').textContent`)) === '4', await P.eval(`return document.getElementById('page-ind').textContent`));
   ok('azioni sulla pagina corrente visibili', await P.eval(`const a=document.querySelector('#page-list li.cur .acts'); return !!a && a.offsetHeight>0`));
   await tap(P, '#btn-add-page'); await sleep(300);
   ok('aggiungi pagina → finestra con i tipi di foglio', await P.eval(`return document.getElementById('dlg').open && document.querySelectorAll('#dlg .paper-opt').length===3`));
@@ -236,14 +176,22 @@ try {
   ok('secondo tocco chiude la barra', await P.eval(`return !document.getElementById('notebook').classList.contains('side-open')`));
 
   // immagine e condividi
-  const ch = P.chooser; await tap(P, 'label.ib.filebtn'); await sleep(300);
+  await tap(P, '#tool-text'); await sleep(200); // "Inserisci immagine" sta nella barra del testo
+  ok('barra testo: pulsante immagine raggiungibile', await reachable(P, '#btn-image'));
+  const ch = P.chooser; await tap(P, '#btn-image'); await sleep(300);
   ok('tocco "Inserisci immagine" apre il selettore file', P.chooser === ch + 1);
   // il menu Condividi di iOS non esiste in Chrome: lo simulo e controllo cosa riceve
   await P.eval(`window.__shared=null; navigator.canShare=()=>true; navigator.share=async(d)=>{ const f=d.files[0]; const b=new Uint8Array(await f.arrayBuffer()); window.__shared={name:f.name, type:f.type, size:f.size, head:String.fromCharCode(...b.slice(0,5))}; }; return 1`);
-  await tap(P, '#btn-export'); await P.waitFor(`window.__shared`, 20000, 'condivisione');
+  await tap(P, '#tool-pen');
+  await tap(P, '#btn-save-menu'); await sleep(300);
+  const ex = await P.eval(`const b=[...document.querySelectorAll('#dlg-options .opt')].find(x=>/Esporta PDF/.test(x.textContent)); const r=b.getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}`);
+  await tapXY(P, ex.x, ex.y);
+  await P.waitFor(`window.__shared || (document.getElementById('dlg').open && /pronto/.test(document.getElementById('dlg-title').textContent))`, 20000, 'esporta');
+  if (!(await P.eval('return !!window.__shared'))) await tap(P, '#dlg-options .opt.accent');
+  await P.waitFor(`window.__shared`, 20000, 'condivisione');
   const sh = await P.eval(`return window.__shared`);
   ok('tocco condividi → menu Condividi riceve un PDF valido', sh.type === 'application/pdf' && sh.head === '%PDF-' && sh.size > 10000 && sh.name === 'multi.pdf', JSON.stringify(sh));
-  ok('dopo la condivisione: niente avvisi bloccati, pulsante attivo', await P.eval(`return document.getElementById('toast').hidden && !document.getElementById('btn-export').disabled`));
+  ok('dopo la condivisione: niente avvisi bloccati, finestre chiuse', await P.eval(`return document.getElementById('toast').hidden && !document.getElementById('dlg').open`));
 
   // libreria
   await tap(P, '#btn-back'); await P.waitFor(`!document.getElementById('library').hidden`);
@@ -286,7 +234,7 @@ try {
   await P.waitFor('document.querySelector(".page[data-rendered]")', 15000); await sleep(800);
   const mid = await rect(P, '.pillbar.mid');
   ok('iPhone: strumenti in basso, dentro lo schermo', mid.y > 700 && mid.y + mid.h <= 844 && mid.x >= 0 && mid.x + mid.w <= 390, JSON.stringify(mid));
-  for (const sel of ['#tool-pen', '#tool-hl', '#btn-color', '#btn-undo', '#btn-back', '#btn-export']) ok('iPhone: ' + sel + ' raggiungibile', await reachable(P, sel));
+  for (const sel of ['#tool-pen', '#tool-hl', '#btn-color', '#btn-undo', '#btn-back', '#btn-save', '#page-ind']) ok('iPhone: ' + sel + ' raggiungibile', await reachable(P, sel));
   ok('iPhone editor: comandi >= 44px', (await small(P)).length === 0, JSON.stringify(await small(P)));
   await shot(P, 'iphone-editor');
   await tap(P, '#tool-hl'); await tap(P, '#tool-hl'); await sleep(250);
@@ -298,6 +246,8 @@ try {
   await tap(P, '#btn-pages'); await sleep(400);
   await P.waitFor(`document.querySelectorAll('#page-list img.th.ok').length>=2`, 15000, 'miniature iPhone');
   await shot(P, 'iphone-sidebar');
+  // la barra si apre centrata sulla pagina corrente: porto in vista la miniatura 2 prima di toccarla
+  await P.eval(`document.querySelector('#page-list li:nth-child(2)').scrollIntoView({block:'center'}); return 1`); await sleep(300);
   await tap(P, '#page-list li:nth-child(2) .go'); await sleep(500);
   ok('iPhone: tocco miniatura chiude la barra', await P.eval(`return !document.getElementById('notebook').classList.contains('side-open')`));
   await tap(P, '#tool-text'); await sleep(200);

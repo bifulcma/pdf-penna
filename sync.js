@@ -11,6 +11,7 @@ export const status = { state: 'off', msg: '', last: 0, account: '' };
 const listeners = new Set(), dataListeners = new Set();
 export const hooks = { flush: async () => {} };
 export const onStatus = (f) => listeners.add(f);
+export const offStatus = (f) => listeners.delete(f);
 export const onData = (f) => dataListeners.add(f);
 function setStatus(state, msg = '') {
   status.state = state; status.msg = msg;

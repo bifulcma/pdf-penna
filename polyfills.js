@@ -37,6 +37,22 @@
   // Response/Blob.bytes() (Safari 18+): pdf.js li usa per caricare font standard, cmap e immagini
   const bytes = function () { return this.arrayBuffer().then((b) => new Uint8Array(b)); };
   for (const C of [g.Response, g.Request, g.Blob]) if (C) def(C.prototype, 'bytes', bytes);
+  // "for await" su un ReadableStream (Safari non lo supporta): pdf.js lo usa per leggere il testo delle pagine (ricerca)
+  if (g.ReadableStream && !g.ReadableStream.prototype[Symbol.asyncIterator]) {
+    const values = function (opt) {
+      const reader = this.getReader(), keep = !!(opt && opt.preventCancel);
+      return {
+        next: () => reader.read(),
+        return: (v) => {
+          const p = keep ? Promise.resolve() : reader.cancel(v);
+          return p.then(() => { reader.releaseLock(); return { done: true, value: v }; });
+        },
+        [Symbol.asyncIterator]() { return this; },
+      };
+    };
+    def(g.ReadableStream.prototype, 'values', values);
+    def(g.ReadableStream.prototype, Symbol.asyncIterator, values);
+  }
   def(Math, 'sumPrecise', function (a) { let s = 0; for (const x of a) s += x; return s; });
   def(URL, 'parse', function (u, b) { try { return new URL(u, b); } catch { return null; } });
   if (!g.structuredClone) {

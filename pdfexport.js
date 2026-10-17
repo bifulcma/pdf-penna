@@ -121,21 +121,31 @@ function drawBlocks(page, blocks, fonts) {
   }
 }
 
-// pages: record ordinati; blobs: Map id -> {mime,data}
-export async function buildNotebookPdf(pages, blobs) {
+// pages: record ordinati; blobs: Map id -> {mime,data}; onProgress(fatte, totale) facoltativo
+export async function buildNotebookPdf(pages, blobs, onProgress) {
   const { PDFDocument, StandardFonts } = window.PDFLib;
   const doc = await PDFDocument.create();
   const fonts = { reg: await doc.embedFont(StandardFonts.Helvetica), bold: await doc.embedFont(StandardFonts.HelveticaBold) };
-  const srcs = new Map();
+  // pagine di ogni PDF copiate tutte insieme: font e immagini in comune vengono copiati una volta sola
+  // (una pagina alla volta, un libro di 300 pagine diventerebbe enorme)
+  const copied = new Map(); // blob -> Map(pdfPage -> pagina copiata)
+  for (const [id, b] of blobs) {
+    const want = [...new Set(pages.filter((p) => p.type === 'pdf' && p.blob === id).map((p) => p.pdfPage))];
+    if (!want.length) continue;
+    const src = await PDFDocument.load(b.data, { ignoreEncryption: true });
+    const ok = want.filter((i) => i < src.getPageCount());
+    const out = await doc.copyPages(src, ok);
+    copied.set(id, new Map(ok.map((i, k) => [i, out[k]])));
+  }
+  let done = 0;
   for (const p of pages) {
+    if (onProgress && ++done % 20 === 0) { onProgress(done, pages.length); await new Promise((r) => setTimeout(r, 0)); }
     let page;
     if (p.type === 'pdf') {
-      const b = blobs.get(p.blob);
-      if (!b) continue;
-      if (!srcs.has(p.blob)) srcs.set(p.blob, await PDFDocument.load(b.data, { ignoreEncryption: true }));
-      const src = srcs.get(p.blob);
-      if (p.pdfPage >= src.getPageCount()) continue;
-      [page] = await doc.copyPages(src, [p.pdfPage]);
+      const m = copied.get(p.blob);
+      page = m && m.get(p.pdfPage);
+      if (!page) continue;
+      m.delete(p.pdfPage); // la stessa pagina non si aggiunge due volte
       doc.addPage(page);
     } else {
       page = doc.addPage([595.28, 595.28 * LAYOUT.a4]);

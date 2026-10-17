@@ -1,9 +1,9 @@
 // La versione della cache cambia a ogni aggiornamento dell'app. Il nuovo service worker si installa e prende
 // subito il controllo; l'app aperta mostra "È pronta una nuova versione · Aggiorna" (niente ricariche a sorpresa).
-const VERSION = 'v5';
+const VERSION = 'v6';
 const CACHE = 'pdf-penna-' + VERSION;
 const SHELL = [
-  './', 'index.html', 'app.js', 'db.js', 'sync.js', 'pdfexport.js', 'config.js', 'polyfills.js', 'pdfworker.js', 'style.css', 'manifest.webmanifest',
+  './', 'index.html', 'app.js', 'db.js', 'sync.js', 'pdfexport.js', 'find.js', 'config.js', 'polyfills.js', 'pdfworker.js', 'style.css', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
   'lib/pdf.min.mjs', 'lib/pdf.worker.min.mjs', 'lib/pdf-lib.min.js', 'lib/msal-browser.min.js',
 ];

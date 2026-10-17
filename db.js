@@ -17,10 +17,10 @@ export function db() {
   });
   return dbp;
 }
-async function tx(store, mode, fn) {
+async function tx(store, mode, fn, opts) {
   const d = await db();
   return new Promise((res, rej) => {
-    const t = d.transaction(store, mode);
+    const t = opts ? d.transaction(store, mode, opts) : d.transaction(store, mode);
     const req = fn(t.objectStore(store));
     t.oncomplete = () => res(req && req.result);
     t.onerror = () => rej(t.error);
@@ -31,8 +31,12 @@ export const put = (s, rec) => tx(s, 'readwrite', (o) => o.put(rec));
 export const get = (s, id) => tx(s, 'readonly', (o) => o.get(id));
 export const all = (s) => tx(s, 'readonly', (o) => o.getAll());
 export const del = (s, id) => tx(s, 'readwrite', (o) => o.delete(id));
+// molti record in una sola transazione (un PDF da 300 pagine si importa in un attimo)
+export const putMany = (s, recs) => tx(s, 'readwrite', (o) => { for (const r of recs) o.put(r); });
 export const getMeta = async (k) => (await get('meta', k))?.v;
 export const setMeta = (k, v) => put('meta', { k, v });
+// scrittura "sicura": il browser la mette subito sul disco (e con lei tutto quello che è stato salvato prima)
+export const setMetaStrict = (k, v) => tx('meta', 'readwrite', (o) => o.put({ k, v }), { durability: 'strict' });
 
 export const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
 export const now = () => Date.now();

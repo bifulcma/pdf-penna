@@ -55,6 +55,10 @@
 <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
 <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 4.6 3.2 17a2 2 0 0 0 1.7 3h14.2a2 2 0 0 0 1.7-3L13.7 4.6a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4"/><circle cx="12" cy="16.7" r="1" fill="currentColor" stroke="none"/></symbol>
 <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></symbol>
+<symbol id="i-save" viewBox="0 0 24 24"><path d="M12 3.8v10.4M7.9 10.3l4.1 4 4.1-4"/><path d="M4.5 14v3.5a2.5 2.5 0 0 0 2.5 2.5h10a2.5 2.5 0 0 0 2.5-2.5V14"/></symbol>
+<symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M7.3 3.8h9.4c.7 0 1.3.6 1.3 1.3v14.6l-6-4.1-6 4.1V5.1c0-.7.6-1.3 1.3-1.3z"/></symbol>
+<symbol id="i-backspace" viewBox="0 0 24 24"><path d="M9.2 5.5h9.3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9.2a2 2 0 0 1-1.5-.7L3.5 12l4.2-5.8a2 2 0 0 1 1.5-.7z"/><path d="M11.8 9.5l5 5M16.8 9.5l-5 5"/></symbol>
+<symbol id="i-dup" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2M14 11.5v5M11.5 14h5"/></symbol>
 <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4.5h3.5a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H14M10 8l-4 4 4 4M6 12h9.5"/></symbol>
 </defs></svg>
 
@@ -88,9 +92,10 @@
 <!-- Quaderno aperto -->
 <section id="notebook" hidden>
   <div id="toolbar">
+   <div class="toprow">
     <div class="pillbar left">
       <button id="btn-back" class="ib" type="button" aria-label="Torna ai quaderni" title="Quaderni"><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg></button>
-      <button id="btn-pages" class="ib" type="button" aria-label="Pagine" title="Pagine"><svg class="ic" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
+      <button id="btn-pages" class="ib" type="button" aria-label="Pagine, segnalibri e ricerca" title="Pagine, segnalibri e ricerca"><svg class="ic" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
     </div>
     <div class="pillbar mid" id="tools">
       <button id="tool-pen" class="ib tool active" type="button" data-tool="pen" aria-label="Penna" title="Penna"><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg><i class="dot"></i></button>
@@ -103,36 +108,78 @@
       <button id="btn-redo" class="ib" type="button" aria-label="Ripeti" title="Ripeti" disabled><svg class="ic" aria-hidden="true"><use href="#i-redo"/></svg></button>
     </div>
     <div class="pillbar right">
-      <span id="page-ind" aria-live="polite"></span>
-      <label class="ib filebtn" aria-label="Inserisci immagine" title="Inserisci immagine"><svg class="ic" aria-hidden="true"><use href="#i-image"/></svg><input id="img-input" class="file-over" type="file" accept="image/*"></label>
-      <button id="btn-export" class="ib" type="button" aria-label="Condividi PDF" title="Condividi PDF"><svg class="ic" aria-hidden="true"><use href="#i-share"/></svg></button>
+      <span id="save-state" role="status" aria-live="polite" data-state="saved"><i class="sdot"></i><span class="long">Salvato</span><span class="short">Salvato</span></span>
+      <button id="btn-save" class="savebtn" type="button" aria-label="Salva" title="Salva"><svg class="ic" aria-hidden="true"><use href="#i-save"/></svg><span>Salva</span></button>
+      <button id="btn-save-menu" class="ib narrow" type="button" aria-label="Esporta PDF e altre opzioni" title="Esporta PDF e altre opzioni"><svg class="ic" aria-hidden="true"><use href="#i-down"/></svg></button>
     </div>
+    <div id="pagebar" class="pillbar">
+      <button id="btn-find" class="ib" type="button" aria-label="Cerca nel testo" title="Cerca nel testo"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg></button>
+      <button id="btn-prev" class="ib" type="button" aria-label="Pagina precedente" title="Pagina precedente"><svg class="ic" aria-hidden="true"><use href="#i-up"/></svg></button>
+      <button id="page-ind" type="button" aria-label="Vai a pagina" title="Vai a pagina"><span class="pre">Pagina </span><b id="pg-cur">1</b><span class="of"> di </span><span id="pg-tot">1</span></button>
+      <button id="btn-next" class="ib" type="button" aria-label="Pagina successiva" title="Pagina successiva"><svg class="ic" aria-hidden="true"><use href="#i-down"/></svg></button>
+      <button id="btn-bm" class="ib" type="button" aria-label="Segnalibro su questa pagina" title="Segnalibro su questa pagina"><svg class="ic" aria-hidden="true"><use href="#i-bookmark"/></svg></button>
+    </div>
+   </div>
     <div id="text-tools" class="pillbar sub" hidden>
       <button class="txt-btn" type="button" data-add="h"><svg class="ic" aria-hidden="true"><use href="#i-heading"/></svg><span>Titolo</span></button>
       <button class="txt-btn" type="button" data-add="p"><svg class="ic" aria-hidden="true"><use href="#i-para"/></svg><span>Testo</span></button>
       <button class="txt-btn" type="button" data-add="ul"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg><span>Elenco</span></button>
       <button class="txt-btn" type="button" data-add="todo"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span>Checklist</span></button>
+      <span class="sep"></span>
+      <label id="btn-image" class="ib filebtn" aria-label="Inserisci immagine" title="Inserisci immagine"><svg class="ic" aria-hidden="true"><use href="#i-image"/></svg><input id="img-input" class="file-over" type="file" accept="image/*"></label>
     </div>
   </div>
   <div id="nb-body">
-    <aside id="sidebar" aria-label="Pagine">
+    <aside id="sidebar" aria-label="Pagine, segnalibri e ricerca">
       <div class="side-head"><b id="side-title"></b><span id="side-count"></span></div>
-      <ol id="page-list"></ol>
-      <div class="side-foot"><button id="btn-add-page" class="pill accent wide" type="button"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg><span>Aggiungi pagina</span></button></div>
+      <div class="seg" role="tablist">
+        <button type="button" role="tab" data-tab="pages" class="on">Pagine</button>
+        <button type="button" role="tab" data-tab="marks">Segnalibri</button>
+        <button type="button" role="tab" data-tab="find">Cerca</button>
+      </div>
+      <div class="tab" id="tab-pages">
+        <ol id="page-list"></ol>
+        <div class="side-foot"><button id="btn-add-page" class="pill accent wide" type="button"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg><span>Aggiungi pagina</span></button></div>
+      </div>
+      <div class="tab" id="tab-marks" hidden>
+        <div class="side-top"><button id="btn-bm-add" class="pill accent wide" type="button"><svg class="ic" aria-hidden="true"><use href="#i-bookmark"/></svg><span id="bm-add-lbl">Segna questa pagina</span></button></div>
+        <ul id="bm-list" class="side-list"></ul>
+        <p id="bm-empty" class="side-empty">Nessun segnalibro. Tocca <b>Segna questa pagina</b> per ritrovare subito la pagina che stai leggendo.</p>
+      </div>
+      <div class="tab" id="tab-find" hidden>
+        <div class="side-top"><div class="find-box"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="find-input" type="search" placeholder="Cerca nel testo" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"></div></div>
+        <p id="find-status" class="side-empty">Scrivi una parola: la cerco in tutte le pagine del PDF e nelle tue note.</p>
+        <ul id="find-list" class="side-list"></ul>
+      </div>
     </aside>
     <div id="viewer"><div id="pages"></div></div>
+    <div id="scrub" aria-hidden="true"><div id="scrub-thumb"><i></i><i></i></div><div id="scrub-tip"><b id="scrub-pg"></b><span id="scrub-of"></span></div></div>
   </div>
 </section>
 
 <!-- Pannello colore / spessore -->
 <div id="pop-backdrop" hidden></div>
-<div id="pop" hidden role="dialog" aria-label="Colore e spessore">
+<div id="pop" class="popover" hidden role="dialog" aria-label="Colore e spessore">
   <i class="arrow"></i>
   <div class="pop-head"><b id="pop-title">Penna</b><span id="pop-sub"></span></div>
   <canvas id="pop-preview" width="680" height="150"></canvas>
   <div id="pop-colors"></div>
   <div class="srow"><span>Spessore</span><div id="sl-size" class="slider" role="slider" aria-label="Spessore" tabindex="0"><i class="track"></i><i class="fill"></i><i class="knob"></i></div><b id="sz-val">3</b></div>
   <div class="srow" id="row-alpha"><span>Opacità</span><div id="sl-alpha" class="slider" role="slider" aria-label="Opacità" tabindex="0"><i class="track"></i><i class="fill"></i><i class="knob"></i></div><b id="al-val">35%</b></div>
+</div>
+
+<!-- Vai a pagina -->
+<div id="goto" class="popover" hidden role="dialog" aria-label="Vai a pagina">
+  <i class="arrow"></i>
+  <div class="pop-head"><b>Vai a pagina</b><span id="goto-sub"></span></div>
+  <div id="goto-field"><span id="goto-val"></span><i class="caret"></i></div>
+  <div class="goto-nav"><button type="button" class="key wide" data-k="prev"><svg class="ic" aria-hidden="true"><use href="#i-up"/></svg><span>Precedente</span></button><button type="button" class="key wide" data-k="next"><svg class="ic" aria-hidden="true"><use href="#i-down"/></svg><span>Successiva</span></button></div>
+  <div class="keypad">
+    <button type="button" class="key" data-k="1">1</button><button type="button" class="key" data-k="2">2</button><button type="button" class="key" data-k="3">3</button>
+    <button type="button" class="key" data-k="4">4</button><button type="button" class="key" data-k="5">5</button><button type="button" class="key" data-k="6">6</button>
+    <button type="button" class="key" data-k="7">7</button><button type="button" class="key" data-k="8">8</button><button type="button" class="key" data-k="9">9</button>
+    <button type="button" class="key soft" data-k="del" aria-label="Cancella"><svg class="ic" aria-hidden="true"><use href="#i-backspace"/></svg></button><button type="button" class="key" data-k="0">0</button><button type="button" class="key go" data-k="go">Vai</button>
+  </div>
 </div>
 
 <!-- Finestra di dialogo generica -->
