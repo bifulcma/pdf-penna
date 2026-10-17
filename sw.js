@@ -1,6 +1,6 @@
 // La versione della cache cambia a ogni aggiornamento dell'app. Il nuovo service worker si installa e prende
 // subito il controllo; l'app aperta mostra "È pronta una nuova versione · Aggiorna" (niente ricariche a sorpresa).
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = 'pdf-penna-' + VERSION;
 const SHELL = [
   './', 'index.html', 'app.js', 'db.js', 'sync.js', 'pdfexport.js', 'config.js', 'polyfills.js', 'pdfworker.js', 'style.css', 'manifest.webmanifest',

@@ -2,7 +2,7 @@ import * as D from './db.js';
 import * as Sync from './sync.js';
 import { buildNotebookPdf, LAYOUT, HL_ALPHA } from './pdfexport.js';
 
-const APP_VERSION = 'v4';
+const APP_VERSION = 'v5';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
