@@ -7,98 +7,174 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<meta name="theme-color" content="#FAF9F5">
+<meta name="theme-color" content="#FAF9F5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1C1917" media="(prefers-color-scheme: dark)">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PDF Penna">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="format-detection" content="telephone=no">
 <link rel="stylesheet" href="style.css">
+<script src="polyfills.js"></script>
 </head>
 <body>
+<!-- Icone (linea 1.75px, angoli arrotondati) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 5 7.5 12l7 7"/></symbol>
+<symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3.2"/><path d="M9.5 4.5v15M5.9 8.2h1.2M5.9 11h1.2"/></symbol>
+<symbol id="i-pen" viewBox="0 0 24 24"><path d="M4.5 19.5l.9-3.9L15.6 5.4a2 2 0 0 1 2.8 0l.2.2a2 2 0 0 1 0 2.8L8.4 18.6z"/><path d="M14 7l3 3"/></symbol>
+<symbol id="i-hl" viewBox="0 0 24 24"><path d="M8.8 12.6 15.9 5.5a1.9 1.9 0 0 1 2.7 0l.9.9a1.9 1.9 0 0 1 0 2.7l-7.1 7.1"/><path d="M8.8 12.6l3.6 3.6-1.6 1.6H7.2v-3.6z"/><path d="M7.2 17.8 5 20h4.2"/></symbol>
+<symbol id="i-eraser" viewBox="0 0 24 24"><path d="M5.1 14.3l8.6-8.6a2 2 0 0 1 2.8 0l2.8 2.8a2 2 0 0 1 0 2.8l-7.8 7.8a2 2 0 0 1-1.4.6H8.6a2 2 0 0 1-1.4-.6l-2.1-2.1a2 2 0 0 1 0-2.7z"/><path d="M9.3 10.1l5.6 5.6M12.5 19.7h7"/></symbol>
+<symbol id="i-text" viewBox="0 0 24 24"><path d="M5.5 7.5v-2h13v2M12 5.5v13M9.5 18.5h5"/></symbol>
+<symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 13.5 4.5 9 9 4.5"/><path d="M4.5 9h10a5 5 0 0 1 0 10h-3"/></symbol>
+<symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 13.5 19.5 9 15 4.5"/><path d="M19.5 9h-10a5 5 0 0 0 0 10h3"/></symbol>
+<symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3.2"/><circle cx="9" cy="9.6" r="1.6"/><path d="M20.5 15.2 16 10.8l-9.8 8.7"/></symbol>
+<symbol id="i-share" viewBox="0 0 24 24"><path d="M12 14.5V3.8M8 7.6l4-3.8 4 3.8"/><path d="M8 10.5H7a2.5 2.5 0 0 0-2.5 2.5v5A2.5 2.5 0 0 0 7 20.5h10a2.5 2.5 0 0 0 2.5-2.5v-5a2.5 2.5 0 0 0-2.5-2.5h-1"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="M15.4 15.4l4.6 4.6"/></symbol>
+<symbol id="i-sync" viewBox="0 0 24 24"><path d="M19.2 9.5A7.5 7.5 0 0 0 5.6 8M4.8 14.5a7.5 7.5 0 0 0 13.6 1.5"/><path d="M19.5 4.5v5h-5M4.5 19.5v-5h5"/></symbol>
+<symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7.2 18.5a4.2 4.2 0 0 1-.5-8.4 5.8 5.8 0 0 1 11.1 1.6 3.4 3.4 0 0 1-.3 6.8z"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7.5h9M17.5 7.5H20M4 16.5h2.5M11 16.5h9"/><circle cx="15.2" cy="7.5" r="2.2"/><circle cx="8.8" cy="16.5" r="2.2"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.8a2.3 2.3 0 0 1 2.3-2.3h3.6a2 2 0 0 1 1.5.7l1.1 1.3h6.2a2.3 2.3 0 0 1 2.3 2.3v7.7a2.3 2.3 0 0 1-2.3 2.3H5.8a2.3 2.3 0 0 1-2.3-2.3z"/></symbol>
+<symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3.5 7.8a2.3 2.3 0 0 1 2.3-2.3h3.6a2 2 0 0 1 1.5.7l1.1 1.3h6.2a2.3 2.3 0 0 1 2.3 2.3v7.7a2.3 2.3 0 0 1-2.3 2.3H5.8a2.3 2.3 0 0 1-2.3-2.3z"/><path d="M12 11v5.5M9.25 13.75h5.5"/></symbol>
+<symbol id="i-import" viewBox="0 0 24 24"><path d="M13.5 3.5h-6a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-10z"/><path d="M13.5 3.5v5h5M12 11.5v6M9.5 15l2.5 2.5 2.5-2.5"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M6.5 14.5 12 9l5.5 5.5"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="M6.5 9.5 12 15l5.5-5.5"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V5.2c0-.4.3-.7.7-.7h3.6c.4 0 .7.3.7.7V7M6.5 7l.8 11.6a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9L17.5 7M10.2 10.8v5.7M13.8 10.8v5.7"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M6.5 3.5h11a1.5 1.5 0 0 1 1.5 1.5v14a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19V5a1.5 1.5 0 0 1 1.5-1.5z"/><path d="M8.5 3.5v17M11.5 8h4.5"/></symbol>
+<symbol id="i-list" viewBox="0 0 24 24"><path d="M9.5 7h10M9.5 12h10M9.5 17h10"/><circle cx="5" cy="7" r="1.1" fill="currentColor" stroke="none"/><circle cx="5" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="5" cy="17" r="1.1" fill="currentColor" stroke="none"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4.5"/><path d="M8.5 12.2l2.4 2.4 4.6-4.9"/></symbol>
+<symbol id="i-heading" viewBox="0 0 24 24"><path d="M6 5v14M16 5v14M6 12h10"/></symbol>
+<symbol id="i-para" viewBox="0 0 24 24"><path d="M4.5 6.5h15M4.5 11h15M4.5 15.5h15M4.5 20h9"/></symbol>
+<symbol id="i-edit" viewBox="0 0 24 24"><path d="M4.5 19.5l.9-3.9L15.6 5.4a2 2 0 0 1 2.8 0l.2.2a2 2 0 0 1 0 2.8L8.4 18.6z"/><path d="M13 19.5h6.5"/></symbol>
+<symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.3-1.2-1.6-1.2-2.8 0-1 .8-1.8 1.8-1.8h2.1a4 4 0 0 0 4-4C20.5 6.6 16.7 3.5 12 3.5z"/><circle cx="7.8" cy="11.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="10.5" cy="7.6" r="1.1" fill="currentColor" stroke="none"/><circle cx="15" cy="7.8" r="1.1" fill="currentColor" stroke="none"/></symbol>
+<symbol id="i-move" viewBox="0 0 24 24"><path d="M3.5 7.8a2.3 2.3 0 0 1 2.3-2.3h3.6a2 2 0 0 1 1.5.7l1.1 1.3h6.2a2.3 2.3 0 0 1 2.3 2.3v7.7a2.3 2.3 0 0 1-2.3 2.3H5.8a2.3 2.3 0 0 1-2.3-2.3z"/><path d="M9 13.8h6M12.8 11.5l2.3 2.3-2.3 2.3"/></symbol>
+<symbol id="i-open" viewBox="0 0 24 24"><path d="M13.5 4.5h6v6M19.5 4.5l-8 8M17.5 14v3.5a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2H10"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 4.6 3.2 17a2 2 0 0 0 1.7 3h14.2a2 2 0 0 0 1.7-3L13.7 4.6a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4"/><circle cx="12" cy="16.7" r="1" fill="currentColor" stroke="none"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></symbol>
+<symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4.5h3.5a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H14M10 8l-4 4 4 4M6 12h9.5"/></symbol>
+</defs></svg>
 
 <!-- Libreria -->
 <main id="library">
   <header class="lib-head">
-    <h1>I miei quaderni</h1>
-    <div id="sync-box">
-      <span class="sync-chip"><i class="sync-dot"></i><span id="sync-text">Solo su questo dispositivo</span></span>
-      <button id="btn-sync" class="tb" hidden>↻ Sincronizza ora</button>
-      <button id="btn-onedrive" class="tb">☁ Collega OneDrive</button>
-      <button id="btn-signout" class="tb" hidden>Scollega</button>
+    <div class="lib-title">
+      <nav id="crumbs" hidden></nav>
+      <h1 id="lib-title">Quaderni</h1>
+      <button id="btn-status" class="status" type="button"><span class="sync-chip"><i class="sync-dot"></i><span id="sync-short">Solo su questo iPad</span></span></button>
+    </div>
+    <div class="lib-tools">
+      <button id="btn-new-folder" class="ib soft" type="button" aria-label="Nuova cartella" title="Nuova cartella"><svg class="ic" aria-hidden="true"><use href="#i-folder-plus"/></svg></button>
+      <button id="btn-settings" class="ib soft" type="button" aria-label="Impostazioni e OneDrive" title="Impostazioni e OneDrive"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg></button>
+      <label class="pill accent filebtn" title="Importa un PDF"><svg class="ic" aria-hidden="true"><use href="#i-import"/></svg><span>Importa PDF</span><input id="pdf-input" class="file-over" type="file" accept="application/pdf,.pdf"></label>
     </div>
   </header>
-  <p id="sync-help" class="muted"></p>
-  <input id="search" type="search" placeholder="Cerca nei titoli e nelle note…" autocomplete="off">
-  <nav id="crumbs"></nav>
-  <div id="lib-grid"></div>
-  <p id="lib-empty" class="muted" hidden>Qui non c’è ancora niente. Crea un quaderno con il pulsante qui sotto.</p>
-  <ul id="results" hidden></ul>
-  <div id="lib-actions">
-    <button id="btn-new-nb" class="tb accent">＋ Quaderno</button>
-    <button id="btn-new-folder" class="tb">＋ Cartella</button>
-    <label class="tb" for="pdf-input">⤓ Importa PDF</label>
-    <input id="pdf-input" type="file" accept="application/pdf,.pdf" hidden>
+  <div class="search-box"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="search" type="search" placeholder="Cerca nei titoli e nelle note" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search"></div>
+  <div id="lib-content">
+    <section id="sec-folders" hidden><h2>Cartelle</h2><div id="folder-grid"></div></section>
+    <section id="sec-nbs"><h2 id="nbs-title">Quaderni</h2>
+      <div id="lib-grid">
+        <button id="btn-new-nb" class="nb-new" type="button"><span class="paper"><span class="plus"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg></span></span><span class="lbl">Nuovo quaderno</span></button>
+      </div>
+      <p id="lib-empty" hidden>Tocca <b>Nuovo quaderno</b> per cominciare, oppure <b>Importa PDF</b> per scrivere su un documento.</p>
+    </section>
   </div>
+  <ul id="results" hidden></ul>
 </main>
 
-<!-- Quaderno -->
+<!-- Quaderno aperto -->
 <section id="notebook" hidden>
-  <header id="toolbar">
-    <button id="btn-back" class="tb" title="Torna ai quaderni">‹ Quaderni</button>
-    <button id="btn-pages" class="tb" title="Elenco pagine">☰ Pagine</button>
-    <span class="sep"></span>
-    <button id="tool-pen" class="tb tool active" data-tool="pen">✎ Penna</button>
-    <button id="tool-hl" class="tb tool" data-tool="hl">▬ Evidenziatore</button>
-    <button id="tool-eraser" class="tb tool" data-tool="eraser">⌫ Gomma</button>
-    <button id="tool-text" class="tb tool" data-tool="text">Aa Testo</button>
-    <span class="sep"></span>
-    <span id="colors">
-      <button class="color active" data-color="#1a1a1a" style="background:#1a1a1a" aria-label="Nero"></button>
-      <button class="color" data-color="#1f5fd1" style="background:#1f5fd1" aria-label="Blu"></button>
-      <button class="color" data-color="#d62828" style="background:#d62828" aria-label="Rosso"></button>
-      <button class="color" data-color="#2a9d4a" style="background:#2a9d4a" aria-label="Verde"></button>
-      <button class="color" data-color="#f5c400" style="background:#f5c400" aria-label="Giallo"></button>
-    </span>
-    <label class="size">Spessore
-      <input id="size" type="range" min="1" max="10" step="1" value="3">
-    </label>
-    <span id="text-tools" hidden>
-      <button class="tb" data-add="h">Titolo</button>
-      <button class="tb" data-add="p">Testo</button>
-      <button class="tb" data-add="ul">• Elenco</button>
-      <button class="tb" data-add="todo">☑ Checklist</button>
-    </span>
-    <span class="sep"></span>
-    <button id="btn-undo" class="tb" title="Annulla" disabled>↶</button>
-    <button id="btn-redo" class="tb" title="Ripeti" disabled>↷</button>
-    <label class="tb" for="img-input" title="Inserisci immagine">🖼 Immagine</label>
-    <input id="img-input" type="file" accept="image/*" hidden>
-    <span class="spacer"></span>
-    <span class="sync-chip mini"><i class="sync-dot"></i></span>
-    <span id="page-ind" class="muted"></span>
-    <button id="btn-export" class="tb accent">⇪ Condividi PDF</button>
-  </header>
+  <div id="toolbar">
+    <div class="pillbar left">
+      <button id="btn-back" class="ib" type="button" aria-label="Torna ai quaderni" title="Quaderni"><svg class="ic" aria-hidden="true"><use href="#i-back"/></svg></button>
+      <button id="btn-pages" class="ib" type="button" aria-label="Pagine" title="Pagine"><svg class="ic" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
+    </div>
+    <div class="pillbar mid" id="tools">
+      <button id="tool-pen" class="ib tool active" type="button" data-tool="pen" aria-label="Penna" title="Penna"><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg><i class="dot"></i></button>
+      <button id="tool-hl" class="ib tool" type="button" data-tool="hl" aria-label="Evidenziatore" title="Evidenziatore"><svg class="ic" aria-hidden="true"><use href="#i-hl"/></svg><i class="dot"></i></button>
+      <button id="tool-eraser" class="ib tool" type="button" data-tool="eraser" aria-label="Gomma" title="Gomma"><svg class="ic" aria-hidden="true"><use href="#i-eraser"/></svg></button>
+      <button id="tool-text" class="ib tool" type="button" data-tool="text" aria-label="Testo e immagini" title="Testo e immagini"><svg class="ic" aria-hidden="true"><use href="#i-text"/></svg></button>
+      <button id="btn-color" class="ib chip" type="button" aria-label="Colore e spessore" title="Colore e spessore"><i class="swatch"></i></button>
+      <span class="sep"></span>
+      <button id="btn-undo" class="ib" type="button" aria-label="Annulla" title="Annulla" disabled><svg class="ic" aria-hidden="true"><use href="#i-undo"/></svg></button>
+      <button id="btn-redo" class="ib" type="button" aria-label="Ripeti" title="Ripeti" disabled><svg class="ic" aria-hidden="true"><use href="#i-redo"/></svg></button>
+    </div>
+    <div class="pillbar right">
+      <span id="page-ind" aria-live="polite"></span>
+      <label class="ib filebtn" aria-label="Inserisci immagine" title="Inserisci immagine"><svg class="ic" aria-hidden="true"><use href="#i-image"/></svg><input id="img-input" class="file-over" type="file" accept="image/*"></label>
+      <button id="btn-export" class="ib" type="button" aria-label="Condividi PDF" title="Condividi PDF"><svg class="ic" aria-hidden="true"><use href="#i-share"/></svg></button>
+    </div>
+    <div id="text-tools" class="pillbar sub" hidden>
+      <button class="txt-btn" type="button" data-add="h"><svg class="ic" aria-hidden="true"><use href="#i-heading"/></svg><span>Titolo</span></button>
+      <button class="txt-btn" type="button" data-add="p"><svg class="ic" aria-hidden="true"><use href="#i-para"/></svg><span>Testo</span></button>
+      <button class="txt-btn" type="button" data-add="ul"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg><span>Elenco</span></button>
+      <button class="txt-btn" type="button" data-add="todo"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span>Checklist</span></button>
+    </div>
+  </div>
   <div id="nb-body">
-    <aside id="sidebar">
-      <div id="side-title"></div>
+    <aside id="sidebar" aria-label="Pagine">
+      <div class="side-head"><b id="side-title"></b><span id="side-count"></span></div>
       <ol id="page-list"></ol>
-      <button id="btn-add-page" class="tb accent">＋ Aggiungi pagina</button>
-      <input id="pdf-add-input" type="file" accept="application/pdf,.pdf" hidden>
+      <div class="side-foot"><button id="btn-add-page" class="pill accent wide" type="button"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg><span>Aggiungi pagina</span></button></div>
     </aside>
     <div id="viewer"><div id="pages"></div></div>
   </div>
 </section>
 
+<!-- Pannello colore / spessore -->
+<div id="pop-backdrop" hidden></div>
+<div id="pop" hidden role="dialog" aria-label="Colore e spessore">
+  <i class="arrow"></i>
+  <div class="pop-head"><b id="pop-title">Penna</b><span id="pop-sub"></span></div>
+  <canvas id="pop-preview" width="680" height="150"></canvas>
+  <div id="pop-colors"></div>
+  <div class="srow"><span>Spessore</span><div id="sl-size" class="slider" role="slider" aria-label="Spessore" tabindex="0"><i class="track"></i><i class="fill"></i><i class="knob"></i></div><b id="sz-val">3</b></div>
+  <div class="srow" id="row-alpha"><span>Opacità</span><div id="sl-alpha" class="slider" role="slider" aria-label="Opacità" tabindex="0"><i class="track"></i><i class="fill"></i><i class="knob"></i></div><b id="al-val">35%</b></div>
+</div>
+
+<!-- Finestra di dialogo generica -->
 <dialog id="dlg">
   <form method="dialog" id="dlg-form">
     <h3 id="dlg-title"></h3>
     <p id="dlg-text"></p>
-    <input id="dlg-input" type="text" autocomplete="off">
+    <input id="dlg-input" type="text" autocomplete="off" enterkeyhint="done">
     <div id="dlg-options"></div>
-    <div class="dlg-btns"><button type="button" id="dlg-cancel" class="tb">Annulla</button></div>
+    <div class="dlg-btns"><button type="button" id="dlg-cancel" class="pill">Annulla</button></div>
   </form>
 </dialog>
+
+<!-- Impostazioni e OneDrive -->
+<dialog id="settings">
+  <div class="set-head"><h3>Impostazioni</h3><button id="set-close" class="ib soft" type="button" aria-label="Chiudi"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+  <div class="group">
+    <div class="group-title">OneDrive</div>
+    <div id="sync-box">
+      <div class="row-status"><span class="sync-chip"><i class="sync-dot"></i><span id="sync-text">Solo su questo dispositivo</span></span></div>
+      <p id="sync-help"></p>
+      <div class="row-btns">
+        <button id="btn-onedrive" class="pill accent" type="button"><svg class="ic" aria-hidden="true"><use href="#i-cloud"/></svg><span>Collega OneDrive</span></button>
+        <button id="btn-sync" class="pill" type="button" hidden><svg class="ic" aria-hidden="true"><use href="#i-sync"/></svg><span>Sincronizza ora</span></button>
+        <button id="btn-signout" class="pill" type="button" hidden><svg class="ic" aria-hidden="true"><use href="#i-logout"/></svg><span>Scollega</span></button>
+      </div>
+    </div>
+  </div>
+  <div class="group">
+    <div class="group-title">App</div>
+    <p class="about">PDF Penna <b id="app-ver"></b> · i quaderni sono salvati su questo dispositivo<span id="sync-about"></span>.</p>
+  </div>
+</dialog>
+
 <div id="toast" hidden></div>
+<div id="update-bar" hidden><span>È pronta una nuova versione</span><button id="btn-update" class="pill small accent" type="button">Aggiorna</button></div>
+<div id="errbox" hidden role="alert">
+  <div class="err-head"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg><b id="err-title">Qualcosa non è andato</b></div>
+  <p id="err-hint">Fai uno screenshot di questo riquadro e mandalo: serve per capire il problema.</p>
+  <pre id="err-msg"></pre>
+  <div class="err-btns"><button id="err-copy" class="pill small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Copia</span></button><button id="err-close" class="pill small accent" type="button">Chiudi</button></div>
+</div>
 
 <script src="config.js"></script>
 <script src="lib/pdf-lib.min.js"></script>

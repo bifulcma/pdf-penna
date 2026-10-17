@@ -32,7 +32,7 @@ export function drawStrokes(page, list) {
       let d = 'M ' + x0 + ' ' + (-y0);
       for (let i = 1; i < pts.length; i++) d += ' L ' + pts[i][0] + ' ' + (-pts[i][1]);
       if (pts.length === 1) d += ' L ' + (x0 + 0.01) + ' ' + (-y0);
-      page.drawSvgPath(d, { x: 0, y: 0, borderColor: color, borderWidth: base, borderOpacity: HL_ALPHA, borderLineCap: LineCapStyle.Round });
+      page.drawSvgPath(d, { x: 0, y: 0, borderColor: color, borderWidth: base, borderOpacity: s.a ?? HL_ALPHA, borderLineCap: LineCapStyle.Round });
     } else if (pts.length === 1) {
       page.drawCircle({ x: pts[0][0], y: pts[0][1], size: base * s.pts[0][2] / 2, color });
     } else {
