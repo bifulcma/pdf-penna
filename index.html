@@ -16,25 +16,41 @@
 </head>
 <body>
 
-<!-- Schermata iniziale -->
-<main id="home">
-  <h1>PDF Penna</h1>
-  <p class="sub">Apri un PDF e scrivici sopra con la Apple Pencil.</p>
-  <label class="big-btn" for="file-input">Apri un PDF</label>
-  <input id="file-input" type="file" accept="application/pdf,.pdf" hidden>
-  <h2>Recenti</h2>
-  <ul id="recent-list"></ul>
-  <p id="recent-empty" class="muted">Nessun PDF ancora. Premi “Apri un PDF”.</p>
+<!-- Libreria -->
+<main id="library">
+  <header class="lib-head">
+    <h1>I miei quaderni</h1>
+    <div id="sync-box">
+      <span class="sync-chip"><i class="sync-dot"></i><span id="sync-text">Solo su questo dispositivo</span></span>
+      <button id="btn-sync" class="tb" hidden>↻ Sincronizza ora</button>
+      <button id="btn-onedrive" class="tb">☁ Collega OneDrive</button>
+      <button id="btn-signout" class="tb" hidden>Scollega</button>
+    </div>
+  </header>
+  <p id="sync-help" class="muted"></p>
+  <input id="search" type="search" placeholder="Cerca nei titoli e nelle note…" autocomplete="off">
+  <nav id="crumbs"></nav>
+  <div id="lib-grid"></div>
+  <p id="lib-empty" class="muted" hidden>Qui non c’è ancora niente. Crea un quaderno con il pulsante qui sotto.</p>
+  <ul id="results" hidden></ul>
+  <div id="lib-actions">
+    <button id="btn-new-nb" class="tb accent">＋ Quaderno</button>
+    <button id="btn-new-folder" class="tb">＋ Cartella</button>
+    <label class="tb" for="pdf-input">⤓ Importa PDF</label>
+    <input id="pdf-input" type="file" accept="application/pdf,.pdf" hidden>
+  </div>
 </main>
 
-<!-- Schermata di lavoro -->
-<section id="editor" hidden>
+<!-- Quaderno -->
+<section id="notebook" hidden>
   <header id="toolbar">
-    <button id="btn-back" class="tb" title="Torna ai documenti">‹ Documenti</button>
+    <button id="btn-back" class="tb" title="Torna ai quaderni">‹ Quaderni</button>
+    <button id="btn-pages" class="tb" title="Elenco pagine">☰ Pagine</button>
     <span class="sep"></span>
     <button id="tool-pen" class="tb tool active" data-tool="pen">✎ Penna</button>
     <button id="tool-hl" class="tb tool" data-tool="hl">▬ Evidenziatore</button>
     <button id="tool-eraser" class="tb tool" data-tool="eraser">⌫ Gomma</button>
+    <button id="tool-text" class="tb tool" data-tool="text">Aa Testo</button>
     <span class="sep"></span>
     <span id="colors">
       <button class="color active" data-color="#1a1a1a" style="background:#1a1a1a" aria-label="Nero"></button>
@@ -46,18 +62,47 @@
     <label class="size">Spessore
       <input id="size" type="range" min="1" max="10" step="1" value="3">
     </label>
+    <span id="text-tools" hidden>
+      <button class="tb" data-add="h">Titolo</button>
+      <button class="tb" data-add="p">Testo</button>
+      <button class="tb" data-add="ul">• Elenco</button>
+      <button class="tb" data-add="todo">☑ Checklist</button>
+    </span>
     <span class="sep"></span>
-    <button id="btn-undo" class="tb" title="Annulla" disabled>↶ Annulla</button>
-    <button id="btn-redo" class="tb" title="Ripeti" disabled>↷ Ripeti</button>
+    <button id="btn-undo" class="tb" title="Annulla" disabled>↶</button>
+    <button id="btn-redo" class="tb" title="Ripeti" disabled>↷</button>
+    <label class="tb" for="img-input" title="Inserisci immagine">🖼 Immagine</label>
+    <input id="img-input" type="file" accept="image/*" hidden>
     <span class="spacer"></span>
+    <span class="sync-chip mini"><i class="sync-dot"></i></span>
     <span id="page-ind" class="muted"></span>
     <button id="btn-export" class="tb accent">⇪ Condividi PDF</button>
   </header>
-  <div id="viewer"><div id="pages"></div></div>
-  <div id="toast" hidden></div>
+  <div id="nb-body">
+    <aside id="sidebar">
+      <div id="side-title"></div>
+      <ol id="page-list"></ol>
+      <button id="btn-add-page" class="tb accent">＋ Aggiungi pagina</button>
+      <input id="pdf-add-input" type="file" accept="application/pdf,.pdf" hidden>
+    </aside>
+    <div id="viewer"><div id="pages"></div></div>
+  </div>
 </section>
 
+<dialog id="dlg">
+  <form method="dialog" id="dlg-form">
+    <h3 id="dlg-title"></h3>
+    <p id="dlg-text"></p>
+    <input id="dlg-input" type="text" autocomplete="off">
+    <div id="dlg-options"></div>
+    <div class="dlg-btns"><button type="button" id="dlg-cancel" class="tb">Annulla</button></div>
+  </form>
+</dialog>
+<div id="toast" hidden></div>
+
+<script src="config.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
+<script src="lib/msal-browser.min.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

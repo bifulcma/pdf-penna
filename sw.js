@@ -1,12 +1,15 @@
-const CACHE = 'pdf-penna-v1';
+// La versione della cache cambia a ogni aggiornamento dell'app. Il nuovo service worker si installa in
+// silenzio e prende il posto del vecchio solo al riavvio dell'app (niente cambi a metà lavoro).
+const VERSION = 'v2';
+const CACHE = 'pdf-penna-' + VERSION;
 const SHELL = [
-  './', 'index.html', 'app.js', 'style.css', 'manifest.webmanifest',
+  './', 'index.html', 'app.js', 'db.js', 'sync.js', 'pdfexport.js', 'config.js', 'style.css', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
-  'lib/pdf.min.mjs', 'lib/pdf.worker.min.mjs', 'lib/pdf-lib.min.js',
+  'lib/pdf.min.mjs', 'lib/pdf.worker.min.mjs', 'lib/pdf-lib.min.js', 'lib/msal-browser.min.js',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
 });
 
 self.addEventListener('activate', (e) => {
