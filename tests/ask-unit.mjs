@@ -62,6 +62,32 @@ const inl = A.mdInline('a **b** c *d* e `f` g_h_i 2*3*4 **non chiuso');
 ok('markdown in linea: grassetto, corsivo, codice; niente corsivo dentro le parole', JSON.stringify(inl.filter((x) => x.t !== 'text')) === JSON.stringify([{ t: 'b', s: 'b' }, { t: 'i', s: 'd' }, { t: 'code', s: 'f' }]) && inl.map((x) => x.s).join('') === 'a b c d e f g_h_i 2*3*4 **non chiuso', inl);
 ok('nessun "lookbehind" nelle espressioni (Safari < 16.4 non partirebbe)', !/\(\?<[=!]/.test((await import('node:fs')).readFileSync(new URL('../ask.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '')));
 
+// ---------- "Cerca sul web" (fase 8) ----------
+const lk = A.mdInline('Vedi [Il Post](https://www.ilpost.it/2013/03/14/gesuiti/) e https://it.wikipedia.org/wiki/Compagnia_(ordine)). Fine.');
+ok('link in linea: [titolo](url) e URL scritto per intero (con le parentesi sue, senza la punteggiatura dopo)', JSON.stringify(lk.filter((x) => x.t === 'a')) === JSON.stringify([{ t: 'a', s: 'Il Post', href: 'https://www.ilpost.it/2013/03/14/gesuiti/' }, { t: 'a', s: 'https://it.wikipedia.org/wiki/Compagnia_(ordine)', href: 'https://it.wikipedia.org/wiki/Compagnia_(ordine)' }]) && lk[lk.length - 1].s === '). Fine.', lk);
+const ev = A.mdInline('[clic](javascript:alert(1)) e javascript:alert(2) e data:text/html,x e [f](file:///etc/hosts)');
+ok('niente link per javascript:, data:, file: (restano testo)', ev.every((x) => x.t === 'text'), ev);
+ok('safeUrl: solo http/https', A.safeUrl('https://a.it/x') === 'https://a.it/x' && A.safeUrl('http://b.it') === 'http://b.it/' && [' javascript:alert(1)', 'data:text/html,x', 'file:///etc/hosts', 'https://a b.it', 'ftp://x.it', '//x.it', ''].every((u) => A.safeUrl(u) === null));
+ok('URL tra «» o con punto finale', A.trimUrl('https://d.it».') === 'https://d.it' && A.trimUrl('https://x.it/a_(b)') === 'https://x.it/a_(b)' && A.trimUrl('https://x.it/a)') === 'https://x.it/a');
+const found = [{ n: 1, title: 'Wiki', url: 'https://it.wikipedia.org/wiki/Compagnia_di_Ges%C3%B9' }, { n: 2, title: 'Il Post', url: 'https://www.ilpost.it/2013/03/14/gesuiti/' }, { n: 3, title: 'Tranello', url: 'https://esempio.example/t' }, { n: 4, title: 'x', url: 'javascript:alert(1)' }];
+const cq = A.collectSources('Approvata nel **1540** [2][1].\n\nFonti:\n1. https://it.wikipedia.org/wiki/Compagnia_di_Ges%C3%B9\n2. https://ilpost.it/2013/03/14/gesuiti', found, true);
+ok('Fonti (Qwen): i numeri [2][1] → quelle fonti, in ordine di citazione, con il titolo; URL ripetuti una volta sola; la [3] non citata no', cq.cited && cq.list.map((s) => s.title).join('|') === 'Il Post|Wiki' && cq.list[0].host === 'ilpost.it', cq);
+const cc = A.collectSources('Nel 1540 ([Il Post](https://www.ilpost.it/2013/03/14/gesuiti/)).\n\nFonti: https://it.wikipedia.org/wiki/Compagnia_di_Ges%C3%B9, https://nuovo.example/x.', [{ title: 'Compagnia di Gesù [Wikipedia]', url: 'https://it.wikipedia.org/wiki/Compagnia_di_Ges%C3%B9' }]);
+ok('Fonti (Claude): link e URL della risposta; titolo da quello del link o della ricerca, se no il sito', cc.cited && cc.list.map((s) => s.title).join('|') === 'Il Post|Compagnia di Gesù [Wikipedia]|nuovo.example' && cc.list[2].url === 'https://nuovo.example/x', cc);
+const cn = A.collectSources('Nessuna fonte citata.', found, false);
+ok('risposta senza citazioni → «Pagine consultate» (le trovate, senza javascript:)', !cn.cited && cn.list.length === 3 && !JSON.stringify(cn).includes('javascript'), cn);
+ok('nessuna fonte → lista vuota', A.collectSources('ciao', [], false).list.length === 0);
+const srcs = cq.list;
+ok('Salva come commento col web: «· web» nell’intestazione e in fondo «Fonti:» con gli URL', A.commentText({ action: 'explain' }, 'qwen', '', 'Risposta [1].', { web: true, sources: srcs }) === '✦ Spiega — Qwen · web\n\nRisposta [1].\n\nFonti:\n1. Il Post — https://www.ilpost.it/2013/03/14/gesuiti/\n2. Wiki — https://it.wikipedia.org/wiki/Compagnia_di_Ges%C3%B9');
+ok('Copia: risposta + fonti; senza fonti solo la risposta', A.withSources(' R ', srcs.slice(0, 1)) === 'R\n\nFonti:\n1. Il Post — https://www.ilpost.it/2013/03/14/gesuiti/' && A.withSources(' R ', []) === 'R');
+ok('cosa cercare: domanda corta + la frase selezionata', A.webQuery({ scope: 'sel', quote: 'La Compagnia di Gesù\nfu approvata', title: 'Libro' }, { question: ' quando? ' }) === 'quando? — La Compagnia di Gesù fu approvata');
+ok('cosa cercare: domanda lunga da sola; azione → la frase; pagina/PDF → il titolo; al massimo 380 caratteri',
+  A.webQuery({ scope: 'page', title: 'T' }, { question: 'chi ha fondato la Compagnia di Gesù e quando' }) === 'chi ha fondato la Compagnia di Gesù e quando'
+  && A.webQuery({ scope: 'sel', quote: 'Ignazio di Loyola', title: 'T' }, { action: 'explain' }) === 'Ignazio di Loyola'
+  && A.webQuery({ scope: 'doc', title: 'Storia dei gesuiti' }, { action: 'sum' }) === 'Storia dei gesuiti'
+  && A.webQuery({ scope: 'sel', quote: 'parola '.repeat(200) }, { action: 'explain' }).length <= 380);
+ok('stato: «Sto cercando: «…»» / «Sto leggendo: sito»', A.searchLabel({ q: 'gesuiti 1540' }) === 'Sto cercando: «gesuiti 1540»' && A.searchLabel({ url: 'https://www.vatican.va/x' }) === 'Sto leggendo: vatican.va' && A.searchLabel({}) === 'Sto cercando sul web');
+
 // ---------- errori ----------
 ok('401 → token non giusto', /token non è giusto/.test(A.errorText(401, null)));
 ok('503 con messaggio del bridge → quel messaggio', A.errorText(503, { error: 'Ollama non risponde' }) === 'Ollama non risponde');

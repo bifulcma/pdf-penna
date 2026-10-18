@@ -39,7 +39,7 @@ for hp, w in (d.get("Web") or {}).items():
   fi
 
   rm -rf "$DIR"
-  printf '  ✓ cartella ~/.studio-bridge cancellata (anche il token)\n\nFatto. In PDF Penna puoi togliere indirizzo e token da Impostazioni › Assistente.\n\n'
+  printf '  ✓ cartella ~/.studio-bridge cancellata (anche il token e la chiave Tavily)\n\nFatto. In PDF Penna puoi togliere indirizzo e token da Impostazioni › Assistente.\n\n'
 }
 
 main "$@"

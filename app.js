@@ -5,7 +5,7 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v8';
+const APP_VERSION = 'v9';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -1639,8 +1639,14 @@ aiCfg.model = aiCfg.model || {};
 const saveAi = () => { try { localStorage.setItem(AI_KEY, JSON.stringify(aiCfg)); } catch {} };
 const aiReady = () => !!(aiCfg.url && aiCfg.token);
 const PRIVACY = 'Il testo selezionato viene inviato al tuo Mac Studio (e, se scegli Claude, a Anthropic con il tuo abbonamento). Non parte niente finché non tocchi un’azione o Invia.';
+const PRIVACY_WEB = 'Con «Cerca sul web» la tua domanda e alcuni pezzi del testo possono uscire dal Mac Studio verso internet: con Claude li usa Anthropic per cercare e leggere pagine; con Qwen la ricerca va a Tavily (un servizio di ricerca). Le pagine trovate sono trattate come dati, non come ordini. Puoi spegnerlo quando vuoi.';
 const askEl = $('ask'), askAns = $('ask-answer');
-const askSt = { scope: 'page', sel: null, src: aiCfg.src === 'claude' ? 'claude' : 'qwen', ctrl: null, busy: false, stopped: false, last: null, answer: '', error: '', info: '', ctxInfo: '', model: '', thinking: false, saved: null };
+const askSt = { scope: 'page', sel: null, src: aiCfg.src === 'claude' ? 'claude' : 'qwen', ctrl: null, busy: false, stopped: false, last: null, answer: '', error: '', info: '', ctxInfo: '', model: '', thinking: false, saved: null,
+  found: [], numbered: false, searching: '', webOld: false };
+// fonti da mostrare (e salvare) per la risposta di adesso: quelle citate, o le pagine consultate
+const askSources = () => (askSt.last && askSt.last.web ? A.collectSources(askSt.answer, askSt.found, askSt.numbered) : { list: [], cited: false });
+// il web per la sorgente scelta c'è sul Mac? (dall'ultima "Prova connessione"; se non si sa, si prova)
+const webHealth = (src) => { const h = aiCfg.health; return h && h['web_' + src] ? h['web_' + src] : null; };
 // testo di una pagina per l'assistente: testo del PDF e note scritte con la tastiera (non i commenti: lì ci sono anche le risposte salvate)
 async function aiPageText(rec, touched) {
   const notes = (rec.blocks || []).map(blockText).filter(Boolean).join('\n');
@@ -1702,7 +1708,19 @@ function paintAsk() {
   }
   $('ask-input').placeholder = askSt.scope === 'sel' ? 'Chiedi qualcosa su questo passaggio…' : askSt.scope === 'page' ? 'Chiedi qualcosa su questa pagina…' : 'Domanda sul PDF…';
   $('ask-send').disabled = askSt.busy;
+  paintAskWeb();
   paintAskOut();
+}
+// interruttore "Cerca sul web" e la riga accanto: cosa fa con la sorgente scelta, o cosa manca sul Mac
+function paintAskWeb() {
+  const on = !!aiCfg.web, b = $('ask-web'), wh = webHealth(askSt.src), note = $('ask-web-note');
+  b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); b.disabled = askSt.busy;
+  const h = aiCfg.health, old = h && h.qwen && !h.web_claude; // bridge della fase 7: non sa cercare
+  note.classList.toggle('warn', on && (old || !!(wh && !wh.ok)));
+  note.textContent = !on ? 'Spento: solo il testo del PDF'
+    : old ? 'Aggiorna il Mac Studio (rilancia l’installazione), poi Prova connessione'
+      : wh && !wh.ok ? (askSt.src === 'qwen' ? 'Qwen: manca la chiave Tavily sullo Studio, usa Claude' : 'Claude: ' + (wh.error || 'non può cercare'))
+        : askSt.src === 'claude' ? 'Claude cerca, legge le pagine e cita le fonti' : 'Qwen legge i primi 5 risultati (Tavily) e li cita';
 }
 let askRaf = 0;
 function paintAskOut() {
@@ -1711,16 +1729,30 @@ function paintAskOut() {
   out.hidden = !shown;
   if (!shown) return;
   const l = askSt.last;
-  $('ask-info').textContent = askSt.info || (l ? [A.SOURCES[l.src].label, A.modelLabel(l.src, askSt.model), askSt.ctxInfo].filter(Boolean).join(' · ') + (askSt.stopped && !askSt.busy && askSt.answer ? ' · fermata' : '') : '');
+  $('ask-info').textContent = askSt.info || (l ? [A.SOURCES[l.src].label, A.modelLabel(l.src, askSt.model), askSt.ctxInfo, l.web ? (askSt.webOld ? 'senza web: aggiorna il Mac Studio' : 'con il web') : ''].filter(Boolean).join(' · ') + (askSt.stopped && !askSt.busy && askSt.answer ? ' · fermata' : '') : '');
   const nearEnd = askAns.scrollHeight - askAns.scrollTop - askAns.clientHeight < 40;
   askAns.textContent = '';
   if (askSt.answer) askAns.append(A.renderMd(askSt.answer));
   if (askSt.busy) {
-    if (!askSt.answer) askAns.append(el('p', 'ask-wait', askSt.thinking ? 'Sta ragionando…' : 'Chiedo a ' + A.SOURCES[askSt.last ? askSt.last.src : askSt.src].label + '…'));
+    if (!askSt.answer) askAns.append(el('p', 'ask-wait' + (askSt.searching ? ' ask-search' : ''), askSt.searching ? askSt.searching + '…' : askSt.thinking ? 'Sta ragionando…' : 'Chiedo a ' + A.SOURCES[askSt.last ? askSt.last.src : askSt.src].label + '…'));
     let tgt = askAns.lastElementChild; // il cursore lampeggia in fondo al testo che sta arrivando
     if (tgt && (tgt.tagName === 'UL' || tgt.tagName === 'OL')) tgt = tgt.lastElementChild;
     if (!tgt || tgt.tagName === 'PRE' || tgt.tagName === 'HR') tgt = askAns;
     tgt.append(el('i', 'caret'));
+    if (askSt.answer && askSt.searching) askAns.append(el('p', 'ask-wait ask-search', askSt.searching + '…')); // Claude cerca ancora a metà risposta
+  } else {
+    const src = askSources();
+    if (src.list.length) { // Fonti: link veri (solo http/https), si aprono in una scheda nuova
+      const box = el('div', 'ask-sources'), h = el('div', 'ask-sources-h');
+      h.append(icon('globe'), el('span', '', src.cited ? 'Fonti' : 'Pagine consultate'));
+      const ol = el('ol');
+      for (const s of src.list) {
+        const a = el('a'); a.href = s.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.append(el('span', 't', s.title), el('span', 'h', s.host));
+        const li = el('li'); li.append(a); ol.append(li);
+      }
+      box.append(h, ol); askAns.append(box);
+    }
   }
   if (askSt.error) { const e = el('div', 'ask-err'); e.append(icon('alert'), el('span', '', askSt.error)); askAns.append(e); }
   if (nearEnd || askSt.busy) askAns.scrollTop = askAns.scrollHeight;
@@ -1789,9 +1821,10 @@ async function askRun(what) {
     if (!ok) return;
     aiCfg.privacy = 1; saveAi();
   }
-  const src = askSt.src, model = aiCfg.model[src] || '';
-  askSt.last = { what, scope: askSt.scope, src, model };
+  const src = askSt.src, model = aiCfg.model[src] || '', web = !!aiCfg.web;
+  askSt.last = { what, scope: askSt.scope, src, model, web };
   askSt.busy = true; askSt.stopped = false; askSt.answer = ''; askSt.error = ''; askSt.saved = null; askSt.thinking = false;
+  askSt.found = []; askSt.numbered = false; askSt.searching = ''; askSt.webOld = false;
   askSt.info = 'Preparo il testo…'; askSt.ctxInfo = ''; askSt.model = model;
   paintAsk();
   const c = await askContext(askSt.scope, what, src);
@@ -1800,6 +1833,7 @@ async function askRun(what) {
   askSt.info = ''; askSt.ctxInfo = c.info;
   askSt.pick = c.pick || null;
   const body = { provider: src, model, system: A.SYSTEM, messages: [{ role: 'user', content: A.buildMessage(c.ctx, what) }] };
+  if (web) { body.web = true; body.web_query = A.webQuery(c.ctx, what); askSt.searching = A.searchLabel(src === 'qwen' ? { q: body.web_query } : null); }
   askSt.sent = body; // per i test
   paintAskOut();
   await askStream(body);
@@ -1821,9 +1855,16 @@ async function askStream(body) {
   let err = null, done = false, idle = 0;
   const arm = () => { clearTimeout(idle); idle = setTimeout(() => { timedOut = true; ctrl.abort(); }, 100000); }; // il bridge manda un "ping" ogni 15 s
   const feed = A.sseReader((name, d) => {
-    if (name === 'text') { askSt.answer += d.t || ''; askSt.thinking = false; askLater(); }
+    if (name === 'text') { askSt.answer += d.t || ''; askSt.thinking = false; askSt.searching = ''; askLater(); }
     else if (name === 'thinking') { if (!askSt.thinking && !askSt.answer) { askSt.thinking = true; askLater(); } }
-    else if (name === 'meta') { if (d.model) { askSt.model = d.model; askLater(); } }
+    else if (name === 'search') { askSt.searching = A.searchLabel(d); askSt.thinking = false; askLater(); }
+    else if (name === 'sources') { askSt.found = Array.isArray(d.list) ? d.list.slice(0, 40) : []; askSt.numbered = !!d.numbered; }
+    else if (name === 'meta') {
+      if (d.model) askSt.model = d.model;
+      if (body.web && d.web !== true) { askSt.webOld = true; askSt.searching = ''; } // bridge vecchio: ha risposto senza cercare
+      else if (body.web && aiCfg.health && !aiCfg.health.web_claude) { aiCfg.health.web_claude = { ok: true, error: '' }; saveAi(); paintAskWeb(); } // Mac aggiornato nel frattempo
+      askLater();
+    }
     else if (name === 'error') err = d.message || 'errore sul Mac Studio';
     else if (name === 'done') done = true;
   });
@@ -1842,7 +1883,7 @@ async function askStream(body) {
   askDone(err);
 }
 function askDone(err) {
-  askSt.busy = false; askSt.ctrl = null; askSt.thinking = false;
+  askSt.busy = false; askSt.ctrl = null; askSt.thinking = false; askSt.searching = '';
   if (err) { askSt.error = err; askSt.info = ''; }
   paintAsk();
 }
@@ -1853,6 +1894,17 @@ askEl.querySelectorAll('.ask-src button').forEach((b) => {
 askEl.querySelectorAll('.ask-scope button').forEach((b) => {
   b.onclick = () => { if (askSt.busy) return; askSt.scope = b.dataset.scope; askSt.answer = ''; askSt.error = ''; askSt.last = null; paintAsk(); };
 });
+// "Cerca sul web": spento all'inizio, la scelta resta ricordata; la prima volta che lo accendi spiega cosa esce verso internet
+$('ask-web').onclick = async () => {
+  if (askSt.busy) return;
+  if (!aiCfg.web && !aiCfg.webPrivacy) {
+    const ok = await modal({ title: 'Cerca sul web', text: PRIVACY_WEB, options: [{ label: 'Accendi la ricerca sul web', value: 'ok', accent: true }, { label: 'Lascia spento', value: 'no' }] });
+    if (!ok || ok.value !== 'ok') return;
+    aiCfg.webPrivacy = 1;
+  }
+  aiCfg.web = !aiCfg.web; saveAi();
+  paintAskWeb();
+};
 $('ask-form').onsubmit = (e) => { e.preventDefault(); const q = $('ask-input').value; askRun({ question: q }); };
 $('ask-input').addEventListener('input', growAsk);
 $('ask-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('ask-form').requestSubmit ? $('ask-form').requestSubmit() : $('ask-form').onsubmit(e); } });
@@ -1860,12 +1912,12 @@ $('ask-input').addEventListener('focus', () => setTimeout(placeAsk, 350));
 $('ask-close').onclick = closeAsk;
 askEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeAsk(); } });
 $('ask-retry').onclick = () => { if (askSt.busy) { askStop(); return; } const l = askSt.last; if (!l) return; askSt.scope = l.scope; askRun(l.what); };
-$('ask-copy').onclick = () => { if (askSt.answer) copyText(askSt.answer.trim(), 'Risposta copiata'); };
+$('ask-copy').onclick = () => { if (askSt.answer) copyText(A.withSources(askSt.answer, askSources().list), 'Risposta copiata'); };
 $('ask-save').onclick = () => {
   const s = askSt.sel, l = askSt.last;
   if (!s || !l || !askSt.answer || askSt.saved) return;
   if (!nb.pages.includes(s.p)) { toast('La pagina è stata ricaricata: seleziona di nuovo il testo'); return; }
-  const a = newAnn(s.part, A.commentText(l.what, l.src, askSt.model, askSt.answer));
+  const a = newAnn(s.part, A.commentText(l.what, l.src, askSt.model, askSt.answer, { web: !!l.web && !askSt.webOld, sources: askSources().list }));
   if (s.rects && s.rects.length) a.r = s.rects;
   commitAnns([{ p: s.p, id: a.id, after: a }]);
   askSt.saved = a.id; paintAskOut();
@@ -1884,6 +1936,13 @@ function aiStatusLine(h) {
   for (const k of ['qwen', 'claude']) {
     const x = h[k] || {}, li = el('li');
     li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', A.SOURCES[k].label + (x.ok ? (k === 'qwen' ? ' · ' + x.default : ' · abbonamento' + (x.plan ? ' ' + x.plan : '')) : ' · ' + (x.error || 'non disponibile'))));
+    ul.append(li);
+  }
+  // ricerca sul web (bridge della fase 8): Claude ✓, Qwen ✓ se sul Mac c'è la chiave Tavily
+  if (!h.web_claude) { const li = el('li'); li.append(el('b', 'n', '✗'), el('span', '', 'Web · il bridge sul Mac Studio è vecchio: rilancia la riga di installazione')); ul.append(li); return; }
+  for (const k of ['claude', 'qwen']) {
+    const x = h['web_' + k] || {}, li = el('li');
+    li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', 'Web con ' + A.SOURCES[k].label + (x.ok ? (k === 'qwen' ? ' · chiave Tavily presente' : ' · ricerca e lettura di pagine') : ' · ' + (x.error || 'non disponibile'))));
     ul.append(li);
   }
 }
@@ -1938,7 +1997,7 @@ async function testAi() {
     const r = await fetch(f.url + '/health?fresh=1', { headers: { Authorization: 'Bearer ' + f.token }, signal: ctrl.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' });
     let j = null; try { j = await r.json(); } catch {}
     if (!r.ok || !j || !j.qwen) throw Object.assign(new Error(A.errorText(r.status, j)), { said: true });
-    aiCfg.health = { at: Date.now(), qwen: j.qwen, claude: j.claude };
+    aiCfg.health = { at: Date.now(), qwen: j.qwen, claude: j.claude, web_claude: j.web_claude || null, web_qwen: j.web_qwen || null };
     // la sorgente scelta non c'è sul Mac ma l'altra sì: passo all'altra
     if (!j[askSt.src].ok && j[askSt.src === 'qwen' ? 'claude' : 'qwen'].ok) { askSt.src = askSt.src === 'qwen' ? 'claude' : 'qwen'; aiCfg.src = askSt.src; }
     saveAi();

@@ -101,7 +101,7 @@ try {
   await device(P, 1024, 768);
   await P.goto(APP); await P.waitFor('window.__penna && document.getElementById("btn-new-nb")');
   await P.eval(SEL_FN + '; return 1');
-  ok('Safari vecchio emulato (API moderne tolte, polyfill) · versione v8 · modulo ask.js caricato', await q('window.__stripped===true && __penna.version==="v8" && !!__penna.A && typeof __penna.A.pickPages==="function"'));
+  ok('Safari vecchio emulato (API moderne tolte, polyfill) · versione v9 · modulo ask.js caricato', await q('window.__stripped===true && __penna.version==="v9" && !!__penna.A && typeof __penna.A.pickPages==="function"'));
 
   await P.setFiles('#pdf-input', [OUT + '/reale7.pdf']);
   await P.waitFor(`!document.getElementById('notebook').hidden && __penna.nb.pages[0] && __penna.nb.pages[0].wrap.dataset.rendered==='1'`, 20000, 'PDF aperto');

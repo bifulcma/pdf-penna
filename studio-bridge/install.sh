@@ -3,12 +3,15 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/bifulcma/pdf-penna/main/studio-bridge/install.sh | bash
 #
+# Per aggiornare:          rilancia la stessa riga (token e chiave Tavily restano)
 # Per cambiare il token:   curl -fsSL …/install.sh | bash -s -- --nuovo-token
+# Chiave Tavily (Qwen col web): curl -fsSL …/install.sh | bash -s -- --chiave-tavily
 # Per togliere tutto:      bash ~/.studio-bridge/uninstall.sh
 #
 # Cosa fa: controlla Python 3, Ollama, Claude Code e Tailscale; copia il bridge in ~/.studio-bridge; crea il token;
-# avvia il bridge in automatico (LaunchAgent, riparte da solo); lo rende raggiungibile dall'iPad con Tailscale Serve
-# (https, solo dentro la tua rete Tailscale). Alla fine stampa indirizzo e token da incollare nell'app.
+# chiede (facoltativa) la chiave Tavily per far cercare sul web anche Qwen; avvia il bridge in automatico (LaunchAgent,
+# riparte da solo); lo rende raggiungibile dall'iPad con Tailscale Serve (https, solo dentro la tua rete Tailscale).
+# Alla fine stampa indirizzo e token da incollare nell'app.
 set -u
 
 # tutto dentro main(): con "curl | bash" bash legge lo script da stdin, così lo legge tutto prima di cominciare
@@ -18,7 +21,11 @@ main() {
   DIR="$HOME/.studio-bridge"
   PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
   NEW_TOKEN="${SB_NEW_TOKEN:-0}"
-  for a in "$@"; do [ "$a" = "--nuovo-token" ] && NEW_TOKEN=1; done
+  ASK_TAVILY=0
+  for a in "$@"; do
+    [ "$a" = "--nuovo-token" ] && NEW_TOKEN=1
+    [ "$a" = "--chiave-tavily" ] && ASK_TAVILY=1
+  done
 
   printf '\n== Studio Bridge per PDF Penna ==\n'
   [ "$(uname -s)" = "Darwin" ] || die "Questo script è per il Mac (macOS)."
@@ -67,8 +74,14 @@ print(("si:" + str(d.get("subscriptionType") or d.get("authMethod") or "")) if d
       no) warn "Claude Code c'è ma manca il login: nel Terminale scrivi  claude  e accedi con l'account dell'abbonamento.";;
       *) ok "Claude Code: $cl";;
     esac
-    if ! "$cl" --help </dev/null 2>/dev/null | grep -q -- '--tools'; then
+    local help
+    help="$("$cl" --help </dev/null 2>/dev/null || true)"
+    if ! printf '%s' "$help" | grep -q -- '--tools'; then
       warn "Claude Code è una versione vecchia: aggiornalo con  claude update"
+    elif printf '%s' "$help" | grep -q -- '--allowedTools' && printf '%s' "$help" | grep -q 'dontAsk'; then
+      ok "Claude può cercare sul web (solo ricerca e lettura di pagine, nient'altro)"
+    else
+      warn "Per «Cerca sul web» con Claude serve una versione più nuova:  claude update"
     fi
   fi
 
@@ -118,6 +131,38 @@ print(d.get("BackendState", ""), (s.get("DNSName") or "").rstrip(".") or "-", "s
   chmod 600 "$DIR/token"
   TOKEN="$(cat "$DIR/token")"
   ok "token pronto"
+
+  # ---------- 6b. Chiave Tavily (facoltativa): serve solo a Qwen per cercare sul web. Resta sul Mac, mai stampata ----------
+  step "Ricerca sul web per Qwen (Tavily, facoltativa)"
+  local tkey="" from_env=0
+  if [ -n "${TAVILY_API_KEY:-}" ] && { [ "$ASK_TAVILY" = 1 ] || [ ! -s "$DIR/tavily.key" ]; }; then
+    tkey="$TAVILY_API_KEY"; from_env=1
+  elif [ "$ASK_TAVILY" = 1 ] || { [ ! -s "$DIR/tavily.key" ] && [ ! -f "$DIR/tavily.salta" ]; }; then
+    if [ -z "${SB_NO_PROMPT:-}" ] && (: </dev/tty) 2>/dev/null; then
+      printf '  Qwen può cercare sul web con Tavily (gratis fino a 1000 ricerche al mese). Claude lo fa anche senza.\n'
+      printf '  Per attivarlo:  1. apri https://app.tavily.com e accedi   2. copia la «API Key» (inizia con tvly-)\n'
+      printf '  Incollala qui e premi Invio (oppure premi solo Invio per saltare): '
+      IFS= read -rs tkey </dev/tty || tkey=""
+      printf '\n'
+      [ -z "$tkey" ] && [ ! -s "$DIR/tavily.key" ] && : >"$DIR/tavily.salta"  # non lo richiedo a ogni aggiornamento
+    fi
+  fi
+  tkey="$(printf '%s' "$tkey" | tr -d '[:space:]')"
+  if [ -n "$tkey" ]; then
+    if printf '%s' "$tkey" | grep -Eq '^tvly-[A-Za-z0-9_-]{8,190}$'; then
+      (umask 077 && printf '%s\n' "$tkey" >"$DIR/tavily.key.new") && mv -f "$DIR/tavily.key.new" "$DIR/tavily.key" || die "Non riesco a salvare la chiave Tavily"
+      chmod 600 "$DIR/tavily.key"; rm -f "$DIR/tavily.salta"
+      if [ "$from_env" = 1 ]; then ok "chiave Tavily presa da TAVILY_API_KEY e salvata (leggibile solo da te)"
+      else ok "chiave Tavily salvata (solo su questo Mac, leggibile solo da te)"; fi
+    else
+      warn "Non sembra una chiave Tavily (inizia con tvly-, senza spazi): non l'ho salvata. Riprova con  | bash -s -- --chiave-tavily"
+    fi
+  elif [ -s "$DIR/tavily.key" ]; then
+    chmod 600 "$DIR/tavily.key"
+    ok "chiave Tavily presente: anche Qwen può cercare sul web"
+  else
+    warn "Senza chiave Tavily, Qwen non cerca sul web (Claude sì). Per aggiungerla:  curl -fsSL $BASE_URL/install.sh | bash -s -- --chiave-tavily"
+  fi
 
   # ---------- 7. Porta locale (8787, o la prima libera se è già usata da altro) ----------
   PORT="${SB_PORT:-$("$PY" -c 'import json, sys
@@ -180,7 +225,9 @@ $(tail -n 15 "$DIR/bridge.log" 2>/dev/null)"
 h = json.load(sys.stdin)
 q, c = h.get("qwen", {}), h.get("claude", {})
 print("    Qwen:   " + ("✓ " + q.get("default", "") if q.get("ok") else "✗ " + q.get("error", "")))
-print("    Claude: " + ("✓ abbonamento " + c.get("plan", "") if c.get("ok") else "✗ " + c.get("error", "")))' 2>/dev/null || true
+print("    Claude: " + ("✓ abbonamento " + c.get("plan", "") if c.get("ok") else "✗ " + c.get("error", "")))
+wc, wq = h.get("web_claude", {}), h.get("web_qwen", {})
+print("    Web:    Claude " + ("✓" if wc.get("ok") else "✗") + " · Qwen " + ("✓" if wq.get("ok") else "✗ " + wq.get("error", "")))' 2>/dev/null || true
 
   # ---------- 9. Tailscale Serve: https://<nome-del-mac>.<tua-rete>.ts.net → bridge (solo dentro la rete Tailscale) ----------
   step "Tailscale Serve (https per l'iPad)"

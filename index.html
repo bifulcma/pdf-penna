@@ -66,6 +66,7 @@
 <symbol id="i-spark" viewBox="0 0 24 24"><path d="M11 3.8c.7 4.1 2.6 6 6.7 6.7-4.1.7-6 2.6-6.7 6.7-.7-4.1-2.6-6-6.7-6.7 4.1-.7 6-2.6 6.7-6.7z"/><path d="M18.2 15.2c.3 1.7 1 2.4 2.7 2.7-1.7.3-2.4 1-2.7 2.7-.3-1.7-1-2.4-2.7-2.7 1.7-.3 2.4-1 2.7-2.7z"/></symbol>
 <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5.5M6.5 11 12 5.5l5.5 5.5"/></symbol>
 <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.6"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5c-2.3-2.4-3.4-5.2-3.4-8.5S9.7 5.9 12 3.5z"/></symbol>
 <symbol id="i-retry" viewBox="0 0 24 24"><path d="M19.2 12a7.2 7.2 0 1 1-2.1-5.1"/><path d="M19.5 4.5v4h-4"/></symbol>
 <symbol id="i-md" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2.8"/><path d="M6.5 14.8V9.2l2.4 3 2.4-3v5.6M15.8 9.2v5.6M13.7 12.8l2.1 2.1 2.1-2.1"/></symbol>
 </defs></svg>
@@ -271,6 +272,7 @@
           <li>Alla fine compaiono <b>Indirizzo</b> e <b>Token</b>: incollali qui sopra.</li>
           <li>Sull’iPad tieni accesa l’app <b>Tailscale</b>, poi tocca <b>Prova connessione</b>.</li>
         </ol>
+        <p class="set-help"><b>Cerca sul web</b>: con Claude funziona subito. Per Qwen serve una chiave gratuita di <b>Tavily</b> sul Mac Studio: l’installazione te la chiede (per aggiungerla dopo, rilancia la riga con <code>| bash -s -- --chiave-tavily</code>).</p>
       </details>
     </div>
   </div>
@@ -308,6 +310,10 @@
     </div>
     <blockquote id="ask-quote"></blockquote>
     <div class="ask-acts" id="ask-acts"></div>
+    <div class="ask-web-row">
+      <button id="ask-web" type="button" role="switch" aria-checked="false"><span class="sw" aria-hidden="true"><i></i></span><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg><span>Cerca sul web</span></button>
+      <span id="ask-web-note" class="ask-web-note"></span>
+    </div>
     <form id="ask-form" autocomplete="off">
       <textarea id="ask-input" rows="1" placeholder="Fai una domanda…" enterkeyhint="send"></textarea>
       <button id="ask-send" class="ib" type="submit" aria-label="Invia la domanda" title="Invia"><svg class="ic" aria-hidden="true"><use href="#i-send"/></svg></button>

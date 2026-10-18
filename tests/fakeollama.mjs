@@ -2,6 +2,8 @@
 // Parole nella domanda: LENTO = non risponde mai, LUNGO = risposta lenta a molti pezzi, ERRORE = errore di Ollama.
 import http from 'node:http';
 export const QWEN_ANSWER = 'Questo passaggio dice che la **libertà** è un dono.\n\n- serve *virtù*\n- serve pazienza\n\nIn breve: `crescere` insieme.';
+// quando nel messaggio ci sono le fonti dal web (Qwen + Tavily): risposta che cita [1] e [2] e un URL
+export const QWEN_WEB_ANSWER = 'Secondo le fonti, la Compagnia di Gesù fu approvata da Paolo III nel **1540** [1][2].\n\n- Fondatore: *Ignazio di Loyola* [2]\n\nFonti:\n1. https://it.wikipedia.org/wiki/Compagnia_di_Ges%C3%B9\n2. https://www.ilpost.it/2013/03/14/gesuiti/';
 export function startOllama(port, { models = ['qwen3:14b', 'llama3.2:3b', 'nomic-embed-text:latest'], delay = 70 } = {}) {
   const st = { requests: [], closedEarly: 0, open: 0, tags: 0 };
   const srv = http.createServer((req, res) => {
@@ -19,7 +21,7 @@ export function startOllama(port, { models = ['qwen3:14b', 'llama3.2:3b', 'nomic
       if (last.includes('ERRORE')) { res.end(JSON.stringify({ error: 'out of memory' }) + '\n'); return; }
       // il ragionamento <think> spezzato a metà del tag, come capita davvero
       const pieces = last.includes('LUNGO') ? Array.from({ length: 80 }, (_, i) => 'pezzo ' + i + ' ')
-        : ['<thi', 'nk>ci penso', ' un attimo</th', 'ink>\n\n', ...QWEN_ANSWER.match(/.{1,9}/gs)];
+        : ['<thi', 'nk>ci penso', ' un attimo</th', 'ink>\n\n', ...(last.includes('Fonti dal web') ? QWEN_WEB_ANSWER : QWEN_ANSWER).match(/.{1,9}/gs)];
       let i = 0, done = false;
       st.open++;
       res.on('close', () => { st.open--; if (!done) st.closedEarly++; });

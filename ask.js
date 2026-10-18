@@ -97,11 +97,77 @@ export function buildMessage(ctx, what) {
   out.push('', a ? a[ctx.scope] : 'Domanda: ' + String(what.question || '').trim() + '\nRispondi basandoti sul testo; se la risposta non c’è, dillo.');
   return out.join('\n');
 }
-// intestazione del commento salvato: si capisce subito da dove viene
-export function commentText(what, src, model, answer) {
+// intestazione del commento salvato: si capisce subito da dove viene; col web, in fondo le fonti con gli URL
+export function commentText(what, src, model, answer, { web = false, sources = [] } = {}) {
   const a = what.action ? actionById(what.action) : null;
-  const head = (a ? a.label : 'Domanda: ' + clipTo(String(what.question || '').trim(), 160)) + ' — ' + SOURCES[src].label + (src === 'claude' ? ' ' + modelLabel(src, model) : '');
-  return '✦ ' + head + '\n\n' + String(answer).trim();
+  const head = (a ? a.label : 'Domanda: ' + clipTo(String(what.question || '').trim(), 160)) + ' — ' + SOURCES[src].label + (src === 'claude' ? ' ' + modelLabel(src, model) : '') + (web ? ' · web' : '');
+  return '✦ ' + head + '\n\n' + withSources(answer, sources);
+}
+// risposta + "Fonti:" numerate (per Salva come commento e Copia)
+export function withSources(answer, sources = []) {
+  const s = String(answer).trim();
+  if (!sources.length) return s;
+  return s + '\n\nFonti:\n' + sources.map((x, i) => (i + 1) + '. ' + (x.title && x.title !== x.url ? x.title + ' — ' : '') + x.url).join('\n');
+}
+
+// ---------- "Cerca sul web" ----------
+// solo indirizzi http/https ben fatti (mai javascript:, data:, file:…), altrimenti null
+export function safeUrl(u) {
+  const s = String(u || '').trim();
+  if (!/^https?:\/\/[^\s<>"]+$/i.test(s) || s.length > 2000) return null;
+  try { const x = new URL(s); return (x.protocol === 'https:' || x.protocol === 'http:') && x.hostname ? x.href : null; } catch { return null; }
+}
+export const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+const urlKey = (u) => { try { const x = new URL(u); return (x.hostname.replace(/^www\./, '') + x.pathname.replace(/\/+$/, '') + x.search).toLowerCase(); } catch { return u; } };
+// un URL scritto nel testo finisce prima della punteggiatura ("…/pagina)." → "…/pagina"), ma tiene le parentesi sue: wiki/X_(Y)
+export function trimUrl(u) {
+  let s = u;
+  for (;;) {
+    const c = s[s.length - 1];
+    if ('.,;:!?»"\'*]'.includes(c)) { s = s.slice(0, -1); continue; }
+    if (c === ')' && (s.match(/\(/g) || []).length < (s.match(/\)/g) || []).length) { s = s.slice(0, -1); continue; }
+    return s;
+  }
+}
+// cosa cercare (Qwen + Tavily): la domanda; se è corta, con l'argomento (frase selezionata o titolo). Senza domanda: la frase o il titolo.
+export function webQuery(ctx, what) {
+  const one = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const cut = (s, n) => (s.length > n ? s.slice(0, n).replace(/\s+\S*$/, '') : s);
+  const q = one(what.question), about = ctx.scope === 'sel' ? one(ctx.quote) : one(ctx.title);
+  let out;
+  if (q) out = q.split(' ').length < 6 && about ? q + ' — ' + cut(about, 160) : q;
+  else out = ctx.scope === 'page' && !about ? cut(one(ctx.pageText), 300) : cut(about, 300);
+  return cut(out, 380);
+}
+// "Sto cercando: «…»" / "Sto leggendo: sito.it" mentre lavora
+export function searchLabel(d) {
+  if (d && d.q) return 'Sto cercando: «' + clipTo(String(d.q), 120) + '»';
+  if (d && d.url && hostOf(d.url)) return 'Sto leggendo: ' + hostOf(d.url);
+  return 'Sto cercando sul web';
+}
+// Le fonti da mostrare sotto la risposta, nell'ordine in cui la risposta le cita:
+// link markdown [titolo](url), URL scritti per intero e, per Qwen, i numeri [1] [2] delle fonti di Tavily.
+// found = fonti mandate dal bridge [{ n?, title, url }]. Se la risposta non ne cita nessuna: le pagine consultate.
+const CITE_RE = /\[([^\]\n]{1,300})\]\((https?:\/\/[^\s()<>]+(?:\([^\s()<>]*\)[^\s()<>]*)*)\)|\[(\d{1,2})\](?!\()|(https?:\/\/[^\s<>"«»]+)/g;
+export function collectSources(answer, found = [], numbered = false) {
+  const known = new Map(), list = [], seen = new Set();
+  for (const f of found) { const u = safeUrl(f && f.url); if (u && !known.has(urlKey(u))) known.set(urlKey(u), { url: u, title: String(f.title || '').trim() }); }
+  const add = (url, title) => {
+    const u = safeUrl(url); if (!u) return;
+    const k = urlKey(u); if (seen.has(k)) return; seen.add(k);
+    const f = known.get(k), t = (f && f.title) || String(title || '').trim();
+    list.push({ url: f ? f.url : u, title: t && !/^https?:\/\//.test(t) ? clipTo(t, 160) : hostOf(u), host: hostOf(u) });
+  };
+  const s = String(answer || '');
+  CITE_RE.lastIndex = 0;
+  let m;
+  while ((m = CITE_RE.exec(s))) {
+    if (m[2]) add(m[2], m[1]);
+    else if (m[3]) { if (numbered) { const f = found.find((x) => x && x.n === +m[3]); if (f) add(f.url, f.title); } }
+    else add(trimUrl(m[4]));
+  }
+  if (list.length) return { list, cited: true };
+  return { list: [...known.values()].slice(0, 8).map((f) => ({ url: f.url, title: f.title || hostOf(f.url), host: hostOf(f.url) })), cited: false };
 }
 
 // ---------- "Domanda sul PDF": solo i passaggi che servono, entro un budget di caratteri ----------
@@ -189,16 +255,20 @@ export function mdBlocks(md) {
   }
   return out;
 }
-// testo in linea: **grassetto**, *corsivo* / _corsivo_, `codice` → [{ t: 'b'|'i'|'code'|'text', s }]
+// testo in linea: **grassetto**, *corsivo* / _corsivo_, `codice`, [link](https://…) e https://… scritti per intero
+// → [{ t: 'b'|'i'|'code'|'text', s } | { t: 'a', s, href }]
 // (niente "lookbehind" nelle espressioni: Safari prima di iOS 16.4 non le capisce e l'app intera non partirebbe)
 export function mdInline(s) {
-  const out = [], re = /(\*\*|__)(?=\S)([\s\S]*?\S)\1|`([^`\n]+)`|(^|[^\w*])([*_])(?=\S)([^*_\n]*?\S)\5(?![\w*])/g;
+  const out = [], re = /(\*\*|__)(?=\S)([\s\S]*?\S)\1|`([^`\n]+)`|(^|[^\w*])([*_])(?=\S)([^*_\n]*?\S)\5(?![\w*])|\[([^\]\n]{1,300})\]\((https?:\/\/[^\s()<>]+(?:\([^\s()<>]*\)[^\s()<>]*)*)\)|(https?:\/\/[^\s<>"«»]+)/g;
   let last = 0, m;
   while ((m = re.exec(s))) {
     const start = m[6] !== undefined ? m.index + m[4].length : m.index; // il carattere prima del corsivo resta testo
     if (start > last) out.push({ t: 'text', s: s.slice(last, start) });
-    if (m[2] !== undefined) out.push({ t: 'b', s: m[2] }); else if (m[3] !== undefined) out.push({ t: 'code', s: m[3] }); else out.push({ t: 'i', s: m[6] });
     last = m.index + m[0].length;
+    if (m[2] !== undefined) out.push({ t: 'b', s: m[2] }); else if (m[3] !== undefined) out.push({ t: 'code', s: m[3] });
+    else if (m[6] !== undefined) out.push({ t: 'i', s: m[6] });
+    else if (m[8] !== undefined) out.push({ t: 'a', s: m[7].replace(/\*\*|__|`/g, ''), href: m[8] });
+    else { const u = trimUrl(m[9]); out.push({ t: 'a', s: u, href: u }); last = m.index + u.length; re.lastIndex = last; } // la punteggiatura dopo resta testo
   }
   if (last < s.length) out.push({ t: 'text', s: s.slice(last) });
   return out;
@@ -210,8 +280,14 @@ export function renderMd(md, doc = document) {
       if (i) parent.append(doc.createElement('br'));
       for (const r of mdInline(line)) {
         if (r.t === 'text') { parent.append(r.s); continue; }
+        if (r.t === 'a') { // link: solo http/https, si apre in una scheda nuova, senza dire alla pagina da dove arrivi
+          const href = safeUrl(r.href);
+          if (!href) { parent.append(r.s); continue; }
+          const a = doc.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = r.s;
+          parent.append(a); continue;
+        }
         const e = doc.createElement(r.t === 'b' ? 'strong' : r.t === 'i' ? 'em' : 'code');
-        if (r.t === 'b') inl(e, r.s); else e.textContent = r.s;
+        if (r.t === 'b' || r.t === 'i') inl(e, r.s); else e.textContent = r.s;
         parent.append(e);
       }
     });
