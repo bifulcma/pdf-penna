@@ -291,6 +291,9 @@ try {
   ok('Cerca nel quaderno trova anche il testo dei commenti', await P.eval(`return document.querySelectorAll('#find-list .fhit').length===1`));
 
   // ======================= OneDrive (finto) =======================
+  // sul sito pubblicato (https) Chrome blocca le chiamate verso il OneDrive finto su localhost: la prova si fa in locale
+  if (!/localhost|127\.0\.0\.1/.test(APP)) console.log('     (OneDrive finto saltato sul sito pubblicato: Chrome blocca le chiamate dal sito a localhost; provato in locale)');
+  else {
   await P.eval(`__penna.Sync.useCustom({token:'fake', base:'http://localhost:9010/v1.0'}); return 1`);
   await P.waitFor(`__penna.Sync.status.state==='idle' && __penna.Sync.status.last>0`, 20000, 'sync');
   await sleep(1500);
@@ -304,6 +307,7 @@ try {
   await B.waitFor(`!document.getElementById('notebook').hidden && __penna.nb.pages.length>0`, 15000, 'apertura B');
   ok('altro dispositivo: commenti arrivati da OneDrive (pagina e Markdown)', await B.eval(`return document.querySelectorAll('.page .ann-pin').length===2 && __penna.allMarkdown().includes('Chiedere parere entro venerdì')`));
   B.close();
+  }
 
   // ======================= libreria: ricerca nei commenti =======================
   await tap(P, '#btn-back'); await P.waitFor(`!document.getElementById('library').hidden`);
