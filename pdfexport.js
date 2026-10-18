@@ -1,4 +1,5 @@
-// Esporta un quaderno in PDF (pdf-lib, locale). Sfondi, immagini, testo e tratti vengono "stampati" sulle pagine.
+// Esporta un quaderno in PDF (pdf-lib, locale). Sfondi, immagini, testo, evidenziazioni e tratti vengono "stampati" sulle pagine;
+// i commenti diventano note PDF.
 export const LAYOUT = { font: 0.028, margin: 0.06, lined: 0.055, grid: 0.04, a4: 1.4142, lh: 1.35, gap: 0.5 };
 export const HL_ALPHA = 0.35;
 
@@ -43,6 +44,34 @@ export function drawStrokes(page, list) {
         });
       }
     }
+  }
+}
+
+// evidenziazioni del testo (sotto i tratti, effetto pennarello) e commenti come note PDF:
+// Anteprima, Acrobat e simili mostrano l'icona del commento e, toccandola, il testo
+export function drawAnns(doc, page, anns) {
+  if (!anns || !anns.length) return;
+  const { rgb, BlendMode, PDFHexString, PDFString } = window.PDFLib;
+  const { width: w, height: h } = page.getSize();
+  const rot = ((page.getRotation().angle % 360) + 360) % 360;
+  for (const a of anns) {
+    const [r, g, b] = hexToRgb(a.c || '#f5c400');
+    for (const q of a.r || []) {
+      const p1 = toPdf(q.l, q.t, w, h, rot), p2 = toPdf(q.l + q.w, q.t + q.h, w, h, rot);
+      page.drawRectangle({ x: Math.min(p1[0], p2[0]), y: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]),
+        color: rgb(r, g, b), opacity: a.a ?? HL_ALPHA, blendMode: BlendMode.Multiply });
+    }
+    const q = (a.r || [])[0];
+    if (!a.n || !q) continue;
+    // nota nel margine destro, all'altezza della prima riga evidenziata (come sullo schermo)
+    const [x, y] = toPdf(0.955, q.t + q.h / 2, w, h, rot), s = 18;
+    const annot = doc.context.obj({
+      Type: 'Annot', Subtype: 'Text', Name: 'Comment', F: 4, Open: false,
+      Rect: [x - s / 2, y - s / 2, x + s / 2, y + s / 2], C: [r, g, b],
+      Contents: PDFHexString.fromText(a.n), T: PDFHexString.fromText('PDF Penna'), Subj: PDFHexString.fromText('«' + a.q + '»'),
+      M: PDFString.fromDate(new Date(a.u || a.t || Date.now())),
+    });
+    page.node.addAnnot(doc.context.register(annot));
   }
 }
 
@@ -156,6 +185,7 @@ export async function buildNotebookPdf(pages, blobs, onProgress) {
       await drawImages(doc, page, p.images, blobs);
       drawBlocks(page, p.blocks, fonts);
     }
+    drawAnns(doc, page, p.anns);
     drawStrokes(page, p.strokes || []);
   }
   if (!doc.getPageCount()) doc.addPage([595.28, 595.28 * LAYOUT.a4]);

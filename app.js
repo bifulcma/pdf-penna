@@ -2,8 +2,9 @@ import * as D from './db.js';
 import * as Sync from './sync.js';
 import { buildNotebookPdf, LAYOUT, HL_ALPHA } from './pdfexport.js';
 import * as F from './find.js';
+import * as N from './notes.js';
 
-const APP_VERSION = 'v6';
+const APP_VERSION = 'v7';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -30,11 +31,12 @@ $('err-copy').onclick = async () => {
 // ---------- pdf.js: caricato solo quando serve, con un solo worker condiviso ----------
 const LIB = new URL('./lib/', import.meta.url).href;
 const pdfOpts = { standardFontDataUrl: LIB + 'standard_fonts/', cMapUrl: LIB + 'cmaps/', cMapPacked: true, iccUrl: LIB + 'iccs/', wasmUrl: LIB + 'wasm/' };
-let pdfjsP = null, pdfWorker = null;
+let pdfjsP = null, pdfWorker = null, pdfMod = null;
 function pdfjs() {
   if (!pdfjsP) {
     pdfjsP = import('./lib/pdf.min.mjs').then((m) => {
       m.GlobalWorkerOptions.workerSrc = new URL('./pdfworker.js', import.meta.url).href;
+      pdfMod = m;
       return m;
     }).catch((e) => {
       pdfjsP = null;
@@ -265,6 +267,13 @@ function paintBlocks(ctx, blocks, W, H) {
     y += fs * LAYOUT.gap;
   }
 }
+// evidenziazioni del testo (per le miniature): stesso effetto "pennarello" dello schermo
+function paintAnns(ctx, anns, W, H) {
+  if (!anns || !anns.length) return;
+  ctx.save(); ctx.globalCompositeOperation = 'multiply';
+  for (const a of anns) { ctx.globalAlpha = a.a ?? HL_ALPHA; ctx.fillStyle = a.c; for (const r of a.r || []) ctx.fillRect(r.l * W, r.t * H, r.w * W, r.h * H); }
+  ctx.restore();
+}
 async function paintImages(ctx, images, W) {
   for (const im of images || []) {
     try {
@@ -293,6 +302,7 @@ async function renderThumb(rec) {
       await page.render({ canvas: cv, canvasContext: ctx, viewport: vp }).promise;
       page.cleanup();
     } else paintPattern(ctx, rec.type, w, h, 1);
+    paintAnns(ctx, rec.anns, w, h);
     await paintImages(ctx, rec.images, w);
     paintBlocks(ctx, rec.blocks, w, h);
     for (const st of rec.strokes || []) drawStroke(ctx, st, w, h);
@@ -511,6 +521,14 @@ async function runSearch() {
       hit('para', highlight(tx.length > 90 ? tx.slice(0, 90) + '…' : tx, q), nd.name + ' · pagina ' + idx, () => openNotebook(nd.id, p.id));
       break;
     }
+    // commenti ed evidenziazioni sul testo del PDF
+    for (const a of p.anns || []) {
+      const tx = (a.n ? a.n + ' — ' : '') + '«' + a.q + '»';
+      if (!tx.toLowerCase().includes(low)) continue;
+      n++;
+      hit('comment', highlight(tx.length > 90 ? tx.slice(0, 90) + '…' : tx, q), nd.name + ' · pagina ' + idx + (a.n ? ' · commento' : ' · evidenziato'), () => openNotebook(nd.id, p.id));
+      break;
+    }
   }
   if (!n) res.append(el('li', 'none', 'Nessun risultato. La scrittura a mano non si può cercare.'));
 }
@@ -525,7 +543,7 @@ const PALETTE = {
 const S = { tool: 'pen', pen: { color: '#1a1a1a', size: 3 }, hl: { color: '#f5c400', size: 3, alpha: HL_ALPHA } };
 try { const saved = JSON.parse(localStorage.getItem('penna.tools') || 'null'); if (saved) { Object.assign(S.pen, saved.pen); Object.assign(S.hl, saved.hl); } } catch {}
 const saveTools = () => { try { localStorage.setItem('penna.tools', JSON.stringify({ pen: S.pen, hl: S.hl })); } catch {} };
-const cfg = () => S[S.tool === 'hl' ? 'hl' : 'pen'];
+const cfg = () => S[S.tool === 'hl' || S.tool === 'select' ? 'hl' : 'pen'];
 const nb = { node: null, pages: [], zoom: 1, undo: [], redo: [], drawing: 0 };
 
 async function openNotebook(id, focusPageId) {
@@ -533,7 +551,7 @@ async function openNotebook(id, focusPageId) {
   if (!node || node.deleted) return;
   if (nb.node) { await flush(); saveLastPage(); }
   nb.node = node; nb.zoom = 1; nb.undo = []; nb.redo = []; updateUndoButtons();
-  closePop(); resetFind();
+  closePop(); resetFind(); endSel(); nb.scanToast = false;
   saveSt.dirty = false; saveSt.at = 0; paintSave();
   library.hidden = true; notebook.hidden = false;
   // se il caricamento facesse chiudere l'app, alla prossima apertura non riapro questo quaderno da solo
@@ -567,7 +585,7 @@ function openGuard(on) {
 const topGap = () => parseFloat(getComputedStyle(pagesEl).paddingTop) - 8;
 
 function teardownPages() {
-  for (const p of nb.pages) { p.dead = true; observer.unobserve(p.wrap); if (p.task) { try { p.task.cancel(); } catch {} } freeCanvas(p.bg); freeCanvas(p.draw); }
+  for (const p of nb.pages) { p.dead = true; observer.unobserve(p.wrap); if (p.task) { try { p.task.cancel(); } catch {} } freeCanvas(p.bg); freeCanvas(p.draw); dropTextLayer(p); }
   nb.pages = []; pagesEl.textContent = ''; want.clear();
 }
 // buildSeq: se arriva una seconda richiesta mentre leggo l'archivio, vince l'ultima (niente pagine doppie)
@@ -579,20 +597,23 @@ async function buildPages() {
   teardownPages();
   for (const rec of recs) {
     const wrap = el('div', 'page'); wrap.dataset.id = rec.id;
-    const bg = el('canvas', 'bg'), imgs = el('div', 'imgs'), txt = el('div', 'txt'), draw = el('canvas', 'draw');
+    // strati: sfondo · evidenziazioni · immagini · testi · tratti · [testo selezionabile] · icone dei commenti
+    const bg = el('canvas', 'bg'), anns = el('div', 'anns'), imgs = el('div', 'imgs'), txt = el('div', 'txt'), draw = el('canvas', 'draw'), pins = el('div', 'pins');
     bg.width = bg.height = draw.width = draw.height = 0;
-    wrap.append(bg, imgs, txt, draw);
+    wrap.append(bg, anns, imgs, txt, draw, pins);
     pagesEl.append(wrap);
-    const p = { rec, wrap, bg, imgs, txt, draw, aspect: rec.aspect || LAYOUT.a4, rendered: false, task: null, pg: null, cw: 0, ch: 0, W: 0, H: 0 };
+    const p = { rec, wrap, bg, anns, imgs, txt, draw, pins, tl: null, aspect: rec.aspect || LAYOUT.a4, rendered: false, task: null, pg: null, cw: 0, ch: 0, W: 0, H: 0 };
     pageOf.set(wrap, p);
     nb.pages.push(p);
     wrap.classList.toggle('textmode', S.tool === 'text');
+    wrap.classList.toggle('selmode', S.tool === 'select');
     paintBm(p);
-    renderText(p); renderImages(p); attachDrawing(p);
+    renderText(p); renderImages(p); renderAnns(p); attachDrawing(p);
   }
   layout();
   renderSidebar();
   renderMarks();
+  renderAnnList();
   return true;
 }
 function fitWidth() {
@@ -686,6 +707,7 @@ async function renderPage(p) {
     const old = p.bg; p.wrap.replaceChild(off, old); freeCanvas(old); p.bg = off; off = null;
     p.wrap.dataset.rendered = '1'; p.wrap.classList.remove('err');
     openGuard(false);
+    if (S.tool === 'select') buildTextLayer(p);
   } catch (e) {
     freeCanvas(off);
     p.rendered = false;
@@ -699,6 +721,7 @@ function releasePage(p) {
   p.rendered = false;
   if (p.task) { try { p.task.cancel(); } catch {} p.task = null; }
   freeCanvas(p.bg); freeCanvas(p.draw);
+  dropTextLayer(p);
   // pdf.js tiene in memoria i dati della pagina disegnata: li libero quando esce dalla vista
   if (p.pg) { try { p.pg.cleanup(); } catch {} p.pg = null; }
   delete p.wrap.dataset.rendered;
@@ -754,7 +777,7 @@ viewer.addEventListener('scroll', () => {
   scrollV = jumped ? 0 : Math.abs(top - lastScrollTop) / Math.max(8, now - lastScrollT);
   jumped = false; lastScrollT = now; lastScrollTop = top;
   if (scrollRaf) return;
-  scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; updatePageIndicator(); showScrub(); saveLastPageSoon(); });
+  scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; updatePageIndicator(); showScrub(); saveLastPageSoon(); if (selSnap) placeSelMenu(); });
 }, { passive: true });
 
 // ultima pagina letta (per quaderno, su questo dispositivo)
@@ -776,6 +799,7 @@ $('btn-prev').onclick = () => { if (!palmTap()) goToPage(curIndex() - 1); };
 $('btn-next').onclick = () => { if (!palmTap()) goToPage(curIndex() + 1); };
 $('btn-bm').onclick = () => { if (!palmTap()) bookmarkPage(curIndex()); };
 $('btn-find').onclick = () => { if (!palmTap()) openFind(); };
+$('btn-notes').onclick = () => { if (!palmTap()) openAnns(); };
 $('page-ind').onclick = () => { if (palmTap()) return; if (!gotoEl.hidden) { closePop(); return; } if (justClosed()) return; openGoto(); };
 
 // pannello "Vai a pagina" con tastierino
@@ -864,7 +888,7 @@ let sideTab = 'pages';
 function showTab(t) {
   sideTab = t;
   document.querySelectorAll('#sidebar .seg button').forEach((b) => { const on = b.dataset.tab === t; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
-  $('tab-pages').hidden = t !== 'pages'; $('tab-marks').hidden = t !== 'marks'; $('tab-find').hidden = t !== 'find';
+  $('tab-pages').hidden = t !== 'pages'; $('tab-marks').hidden = t !== 'marks'; $('tab-find').hidden = t !== 'find'; $('tab-anns').hidden = t !== 'anns';
   if (t === 'pages') { observeSideThumbs(); centerCurThumb(); }
 }
 document.querySelectorAll('#sidebar .seg button').forEach((b) => { b.onclick = () => showTab(b.dataset.tab); });
@@ -985,7 +1009,7 @@ async function pdfText(rec, touched) {
   return str;
 }
 async function pageText(rec, touched) {
-  const notes = (rec.blocks || []).map(blockText).filter(Boolean).join('\n');
+  const notes = [...(rec.blocks || []).map(blockText), ...(rec.anns || []).map((a) => a.n)].filter(Boolean).join('\n');
   if (rec.type !== 'pdf') return notes;
   const t = await pdfText(rec, touched);
   return notes ? t + '\n' + notes : t;
@@ -1079,6 +1103,529 @@ $('find-input').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   e.preventDefault(); clearTimeout(findTimer); runFind($('find-input').value); e.target.blur();
 });
+
+// ---------- Testo selezionabile (strumento Seleziona) ----------
+// Sopra la pagina PDF c'è il livello di testo di pdf.js: lettere trasparenti nello stesso punto di quelle stampate,
+// così il dito o la Pencil selezionano il testo con le maniglie di iOS. Si costruisce solo con lo strumento Seleziona
+// e solo per le pagine disegnate (vicine allo schermo): anche un libro da 300 pagine resta leggero.
+const tlPages = new Set(); // pagine che hanno il livello di testo
+const SCAN_MSG = 'Questo PDF è una scansione: non contiene testo selezionabile';
+async function buildTextLayer(p) {
+  if (p.rec.type !== 'pdf' || !p.pg || p.dead) return;
+  const page = p.pg;
+  const scale = p.cw / page.getViewport({ scale: 1 }).width; // pixel dello schermo per punto del PDF
+  if (p.tl) { // c'è già: dopo uno zoom cambio solo la scala (posizioni e larghezze sono in proporzione)
+    if (Math.abs(p.tl.scale - scale) > 1e-6) { p.tl.scale = scale; p.tl.div.style.setProperty('--total-scale-factor', String(scale)); }
+    return;
+  }
+  const m = await pdfjs();
+  if (p.tl || p.pg !== page || p.dead) return;
+  const vp = page.getViewport({ scale });
+  const div = el('div', 'textLayer');
+  const mark = {};
+  p.tl = mark; // segnaposto: niente doppioni mentre leggo il testo
+  let tc;
+  try { tc = await page.getTextContent({ includeMarkedContent: true, disableNormalization: true }); } catch { tc = null; }
+  if (p.tl !== mark || p.dead) return;
+  p.tl = null;
+  if (!tc) return;
+  const layer = new m.TextLayer({ textContentSource: tc, container: div, viewport: vp });
+  // misure in % della pagina: seguono lo zoom (pagina ruotata: il livello è girato, quindi i lati sono scambiati)
+  const rot = vp.rotation % 180 !== 0;
+  div.style.width = (rot ? p.aspect * 100 : 100) + '%'; div.style.height = (rot ? 100 / p.aspect : 100) + '%';
+  div.style.setProperty('--total-scale-factor', String(scale));
+  const tl = { div, layer, scale, end: null };
+  p.tl = tl; tlPages.add(p);
+  p.wrap.insertBefore(div, p.pins);
+  try { await layer.render(); } catch { if (p.tl === tl) dropTextLayer(p); return; }
+  if (p.tl !== tl) return;
+  const t0 = performance.now();
+  if (!window.__noFit) tl.fitted = fitToInk(p, layer, tc.items.filter((it) => it.str !== undefined));
+  tl.fitMs = Math.round(performance.now() - t0); // per i test: quanto costa posare le parole
+  const end = el('div', 'endOfContent'); div.append(end); tl.end = end;
+  div.addEventListener('mousedown', () => div.classList.add('selecting'));
+  const has = layer.textContentItemsStr.some((t) => t.trim());
+  p.wrap.classList.toggle('notext', !has);
+  if (!has) {
+    if (!p.wrap.querySelector('.scan-note')) { const n = el('div', 'scan-note'); n.append(icon('alert'), el('span', '', SCAN_MSG)); p.wrap.append(n); }
+    if (S.tool === 'select' && !nb.scanToast && p === currentPage()) { nb.scanToast = true; toast(SCAN_MSG, 4500); }
+  }
+}
+function dropTextLayer(p) {
+  if (!p.tl) return;
+  if (p.tl.layer) { try { p.tl.layer.cancel(); } catch {} p.tl.div.remove(); }
+  p.tl = null; tlPages.delete(p);
+}
+// Allineamento fine. pdf.js scrive ogni riga del PDF col carattere del browser (diverso da quello del PDF) e la allarga
+// tutta insieme: a metà riga le parole possono scivolare di qualche pixel, soprattutto nel testo giustificato.
+// Qui ogni parola viene posata sull'inchiostro vero della pagina appena disegnata (inizio e fine di ogni parola).
+// Se parole e macchie d'inchiostro non tornano (sottolineature, sfondi, lettere attaccate) la riga resta com'è.
+const fitCtx = document.createElement('canvas').getContext('2d');
+const emOf = (txt, fam) => { fitCtx.font = '100px ' + fam; return fitCtx.measureText(txt).width / 100; };
+function fitToInk(p, layer, items) {
+  const cv = p.bg;
+  if (!cv.width || !p.cw || p.tl.div.dataset.mainRotation !== '0') return 0;
+  const k = cv.width / p.cw, lines = [];
+  for (let i = 0; i < layer.textDivs.length && i < items.length; i++) {
+    const d = layer.textDivs[i], it = items[i], st = d.style;
+    if (!it.str || !it.str.trim() || !d.isConnected || st.getPropertyValue('--rotate') || !it.width) continue;
+    const t = it.transform, fh = parseFloat(st.getPropertyValue('--font-height'));
+    if (!fh || Math.abs(t[1]) > 1e-3 * fh || Math.abs(t[2]) > 1e-3 * fh) continue;
+    const F = fh * p.tl.scale, L = parseFloat(st.left) / 100 * p.cw, T = parseFloat(st.top) / 100 * p.ch;
+    lines.push({ d, str: it.str, F, L, T, R: L + it.width * p.tl.scale, sx: parseFloat(st.getPropertyValue('--scale-x')) || 1 });
+  }
+  p.tl.lineCount = lines.length;
+  if (!lines.length) return 0;
+  // una sola lettura dei pixel: il riquadro che contiene tutto il testo
+  let x0 = Infinity, y0 = Infinity, x1 = 0, y1 = 0;
+  for (const l of lines) { x0 = Math.min(x0, l.L - l.F); x1 = Math.max(x1, l.R + l.F); y0 = Math.min(y0, l.T); y1 = Math.max(y1, l.T + l.F * 1.2); }
+  x0 = Math.max(0, Math.floor(x0 * k)); y0 = Math.max(0, Math.floor(y0 * k)); x1 = Math.min(cv.width, Math.ceil(x1 * k)); y1 = Math.min(cv.height, Math.ceil(y1 * k));
+  if (x1 - x0 < 4 || y1 - y0 < 4) return 0;
+  let px;
+  try { px = cv.getContext('2d').getImageData(x0, y0, x1 - x0, y1 - y0).data; } catch { return 0; }
+  const bw = x1 - x0, todo = [];
+  let fitted = 0;
+  for (const l of lines) {
+    // colonne con inchiostro nella fascia delle lettere della riga (sopra le gambe di g, p, q)
+    const ya = Math.max(y0, Math.round((l.T + l.F * 0.15) * k)), yb = Math.min(y1, Math.round((l.T + l.F * 0.86) * k));
+    const xa = Math.max(x0, Math.floor((l.L - l.F * 0.08) * k)), xb = Math.min(x1, Math.ceil((l.R + l.F * 0.08) * k));
+    if (yb - ya < 2 || xb - xa < 2) continue;
+    const runs = [], gap = Math.max(2, l.F * k * 0.16);
+    let s0 = -1, last = -1e9;
+    for (let x = xa; x < xb; x++) {
+      let ink = false;
+      for (let y = ya; y < yb && !ink; y++) { const i = ((y - y0) * bw + (x - x0)) * 4; ink = px[i] + px[i + 1] + px[i + 2] < 510; }
+      if (!ink) continue;
+      if (x - last > gap) { if (s0 >= 0) runs.push([s0, last + 1]); s0 = x; }
+      last = x;
+    }
+    if (s0 >= 0) runs.push([s0, last + 1]);
+    const words = [...l.str.matchAll(/\S+/g)], fam = l.d.style.fontFamily;
+    if (!words.length || runs.length < words.length) continue;
+    if (runs.length > words.length) {
+      // più macchie che parole (apostrofi, accenti staccati): ogni macchia va alla parola dove pdf.js la metterebbe
+      const at = (n) => (l.L + l.sx * l.F * emOf(l.str.slice(0, n), fam)) * k;
+      const exp = words.map((m) => [at(m.index), at(m.index + m[0].length)]);
+      const own = runs.map(([a, b]) => {
+        let best = -1, bo = 0, bd = Infinity;
+        exp.forEach(([c, d], j) => { const o = Math.min(b, d) - Math.max(a, c), dd = Math.abs((a + b) / 2 - (c + d) / 2); if (o > bo || (bo <= 0 && o <= 0 && dd < bd)) { bo = Math.max(bo, o); bd = dd; best = j; } });
+        return best;
+      });
+      const merged = words.map(() => null);
+      own.forEach((j, r) => { const g = merged[j]; merged[j] = g ? [g[0], runs[r][1]] : [runs[r][0], runs[r][1]]; });
+      if (merged.some((g) => !g) || own.some((j, r) => r && j < own[r - 1])) continue;
+      runs.length = 0; runs.push(...merged);
+    }
+    // in em della riga (prima della sua scala orizzontale): così vale a ogni zoom
+    const em = (x) => (x / k - l.L) / l.sx / l.F;
+    const frag = document.createDocumentFragment(), parts = [];
+    let pos = 0;
+    words.forEach((m, j) => {
+      const before = l.str.slice(pos, m.index);
+      const g = before ? el('span', 'g', before) : null, w = el('span', 'w', m[0]);
+      if (g) frag.append(g);
+      frag.append(w);
+      parts.push({ g, w, n: [...m[0]].length, sp: before ? (before.match(/ /g) || []).length || 1 : 0, u: em(runs[j][0]), v: em(runs[j][1]) });
+      pos = m.index + m[0].length;
+    });
+    if (pos < l.str.length) frag.append(l.str.slice(pos));
+    l.d.textContent = ''; l.d.append(frag);
+    l.parts = parts;
+    todo.push(l);
+  }
+  // larghezze naturali misurate nella pagina, con le stesse regole (legature spente): una sola misurazione per tutte le righe
+  const unit = (e, l) => e.getBoundingClientRect().width / l.sx / l.F;
+  for (const l of todo) for (const q of l.parts) { q.wn = unit(q.w, l); q.gn = q.g ? unit(q.g, l) : 0; }
+  for (const l of todo) {
+    let cur = 0, ok = true;
+    for (const q of l.parts) {
+      if (q.g) q.g.style.wordSpacing = ((q.u - cur - q.gn) / q.sp).toFixed(4) + 'em';
+      else q.w.style.marginLeft = (q.u - cur).toFixed(4) + 'em';
+      q.w.style.letterSpacing = ((q.v - q.u - q.wn) / q.n).toFixed(4) + 'em';
+      // macchia troppo diversa dalla parola: meglio non toccare (parole di 1-2 segni come "1" o "è" hanno poco inchiostro: si accettano)
+      if (!q.wn || (q.n >= 3 && Math.abs(q.v - q.u - q.wn) > q.wn * 0.45)) ok = false;
+      cur = q.v;
+    }
+    if (ok) fitted++; else l.d.textContent = l.str;
+  }
+  return fitted;
+}
+// bordo dell'evidenziazione sull'inchiostro vero della pagina (il testo trasparente può scostarsi di un paio di pixel).
+// r in frazioni della pagina; side 'l' o 'r'. Ritorna la nuova x (frazione) oppure null.
+function inkEdge(p, r, side) {
+  const cv = p.bg;
+  if (!cv.width || !cv.height) return null;
+  const Wc = cv.width, Hc = cv.height, F = r.h * Hc, ex = (side === 'l' ? r.l : r.l + r.w) * Wc;
+  const x0 = Math.max(0, Math.floor(ex - F * 0.7)), x1 = Math.min(Wc, Math.ceil(ex + F * 0.7));
+  const y0 = Math.max(0, Math.floor((r.t + r.h * 0.2) * Hc)), y1 = Math.min(Hc, Math.ceil((r.t + r.h * 0.78) * Hc));
+  if (x1 - x0 < 3 || y1 - y0 < 2) return null;
+  let d;
+  try { d = cv.getContext('2d').getImageData(x0, y0, x1 - x0, y1 - y0).data; } catch { return null; }
+  const bw = x1 - x0, bh = y1 - y0, ink = new Uint8Array(bw);
+  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { const i = (y * bw + x) * 4; if (d[i] + d[i + 1] + d[i + 2] < 450) ink[x] = 1; }
+  const gap = Math.max(2, F * 0.16), edges = [];
+  let start = -1, last = -1e9;
+  for (let x = 0; x < bw; x++) if (ink[x]) { if (x - last > gap) { if (start >= 0) edges.push([start, last + 1]); start = x; } last = x; }
+  if (start >= 0) edges.push([start, last + 1]);
+  let best = null, bd = F * 0.45;
+  for (const [a, b] of edges) { const v = side === 'l' ? a : b, dd = Math.abs(v - (ex - x0)); if (dd < bd) { bd = dd; best = v; } }
+  return best === null ? null : (x0 + best) / Wc;
+}
+// riquadri definitivi: inizio e fine agganciati alle lettere (solo se la selezione comincia/finisce a inizio/fine parola),
+// più un filo di margine come un vero evidenziatore
+function snapRects(part) {
+  const rs = part.rects.map((r) => ({ ...r }));
+  if (!rs.length) return rs;
+  const first = rs[0], last = rs[rs.length - 1];
+  if (part.ws) { const x = inkEdge(part.p, first, 'l'); if (x !== null && x < first.l + first.w) { first.w += first.l - x; first.l = x; } }
+  if (part.we) { const x = inkEdge(part.p, last, 'r'); if (x !== null && x > last.l) last.w = x - last.l; }
+  const r4 = (v) => Math.round(v * 10000) / 10000;
+  return rs.map((r) => { const pad = r.h * part.p.aspect * 0.07; return { l: r4(Math.max(0, r.l - pad)), t: r4(r.t), w: r4(Math.min(1 - Math.max(0, r.l - pad), r.w + 2 * pad)), h: r4(r.h) }; });
+}
+function startSelectMode() {
+  for (const p of nb.pages) if (p.pg && p.wrap.dataset.rendered) buildTextLayer(p);
+  if (nb.pages.length && !nb.pages.some((p) => p.rec.type === 'pdf')) { toast('Qui non c’è testo di un PDF: lo strumento Seleziona serve sulle pagine dei PDF', 4000); return; }
+  let seen = null; try { seen = localStorage.getItem('penna.selHint'); localStorage.setItem('penna.selHint', '1'); } catch {}
+  if (!seen) toast('Tieni premuto su una parola e trascina per scegliere il testo', 3500);
+}
+
+// ---------- Selezione: Copia · Evidenzia · Commenta · Copia con commento ----------
+const selMenu = $('selmenu');
+let selSnap = null, selTimer = 0, menuDown = 0;
+const inTextLayer = (n) => { const e = n && (n.nodeType === 1 ? n : n.parentElement); return !!(e && e.closest('.textLayer')); };
+const normText = (t) => (pdfMod && pdfMod.normalizeUnicode ? pdfMod.normalizeUnicode(t) : t); // legature del PDF (ﬁ → fi)
+// testo e riquadri della selezione su una pagina; i riquadri in frazioni della pagina valgono a ogni zoom
+function pagePart(p, range) {
+  const W = p.wrap.getBoundingClientRect();
+  if (!W.width || !W.height) return null;
+  const tw = document.createTreeWalker(p.tl.div, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
+    { acceptNode: (n) => (n.nodeType === 3 || n.nodeName === 'BR' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP) });
+  let text = '', ws = false, we = false, seen = false;
+  const rects = [], sub = document.createRange();
+  for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+    if (!range.intersectsNode(n)) continue;
+    if (n.nodeName === 'BR') { text += '\n'; continue; }
+    let a = n === range.startContainer ? range.startOffset : 0, b = n === range.endContainer ? range.endOffset : n.length;
+    if (b <= a) continue;
+    text += n.data.slice(a, b);
+    while (a < b && /\s/.test(n.data[a])) a++;
+    while (b > a && /\s/.test(n.data[b - 1])) b--;
+    if (b <= a) continue;
+    if (!seen) { seen = true; ws = a === 0 || /\s/.test(n.data[a - 1]); }
+    we = b === n.length || /\s/.test(n.data[b]);
+    sub.setStart(n, a); sub.setEnd(n, b);
+    for (const c of sub.getClientRects()) {
+      const l = Math.max(0, (c.left - W.left) / W.width), t = Math.max(0, (c.top - W.top) / W.height);
+      const r = Math.min(1, (c.right - W.left) / W.width), bt = Math.min(1, (c.bottom - W.top) / W.height);
+      if (r > l && bt > t) rects.push({ l, t, w: r - l, h: bt - t });
+    }
+  }
+  const quote = N.cleanQuote(normText(text));
+  if (!quote || !rects.length) return null;
+  return { p, quote, rects: N.mergeRects(rects), ws, we };
+}
+function readSelection() {
+  const sel = document.getSelection();
+  if (!sel || !sel.rangeCount || sel.isCollapsed || S.tool !== 'select' || notebook.hidden) return null;
+  const range = sel.getRangeAt(0), parts = [];
+  for (const p of tlPages) if (p.tl && p.tl.end && range.intersectsNode(p.tl.div)) { const part = pagePart(p, range); if (part) parts.push(part); }
+  if (!parts.length) return null;
+  parts.sort((a, b) => nb.pages.indexOf(a.p) - nb.pages.indexOf(b.p));
+  return { parts, text: parts.map((x) => x.quote).join('\n\n') };
+}
+function showSelMenu() {
+  selMenu.querySelector('.hdot').style.background = S.hl.color;
+  selMenu.hidden = false;
+  placeSelMenu();
+}
+function hideSelMenu() { selMenu.hidden = true; }
+// fine della selezione: dopo un'azione, cambiando strumento o quaderno
+function endSel() {
+  selSnap = null; hideSelMenu(); clearTimeout(selTimer);
+  const sel = document.getSelection();
+  if (sel && sel.rangeCount && inTextLayer(sel.anchorNode)) sel.removeAllRanges();
+}
+// il menu sta sotto il testo scelto (sopra di solito c'è il menu di iOS); se sotto non c'è posto, sopra
+function placeSelMenu() {
+  if (!selSnap || selMenu.hidden) return;
+  let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
+  for (const part of selSnap.parts) {
+    if (!part.p.wrap.isConnected) continue;
+    const W = part.p.wrap.getBoundingClientRect();
+    for (const r of part.rects) {
+      top = Math.min(top, W.top + r.t * W.height); bottom = Math.max(bottom, W.top + (r.t + r.h) * W.height);
+      left = Math.min(left, W.left + r.l * W.width); right = Math.max(right, W.left + (r.l + r.w) * W.width);
+    }
+  }
+  if (top === Infinity) { hideSelMenu(); return; }
+  const mw = selMenu.offsetWidth, mh = selMenu.offsetHeight, gap = 14;
+  const hi = $('btn-back').getBoundingClientRect().bottom + 10;
+  let lo = innerHeight - 8;
+  for (const b of [$('pagebar'), $('tools')]) { const r = b.getBoundingClientRect(); if (r.height && r.top > innerHeight / 2) lo = Math.min(lo, r.top - 10); }
+  let y = bottom + gap;
+  if (y + mh > lo) y = top - gap - mh;
+  if (y < hi) y = Math.max(hi, Math.min(lo - mh, (top + bottom - mh) / 2)); // selezione più alta dello schermo: in mezzo
+  selMenu.style.left = Math.max(8, Math.min(innerWidth - mw - 8, (left + right - mw) / 2)) + 'px';
+  selMenu.style.top = y + 'px';
+  selMenu.style.visibility = bottom < hi || top > lo ? 'hidden' : ''; // testo scorso fuori dallo schermo
+}
+function updateSel() {
+  const s = readSelection();
+  if (!s) {
+    // tocco sul menu: iPad può togliere la selezione prima del "click", quindi il menu aspetta un attimo
+    if (Date.now() - menuDown < 700) { clearTimeout(selTimer); selTimer = setTimeout(updateSel, 750); return; }
+    selSnap = null; hideSelMenu(); return;
+  }
+  selSnap = s; showSelMenu();
+}
+document.addEventListener('selectionchange', () => {
+  if (notebook.hidden || S.tool !== 'select') return;
+  fixSelectionEnd();
+  clearTimeout(selTimer);
+  selTimer = setTimeout(updateSel, 140);
+});
+selMenu.addEventListener('pointerdown', (e) => { menuDown = Date.now(); if (e.pointerType === 'mouse') e.preventDefault(); });
+selMenu.querySelectorAll('button').forEach((b) => { b.onclick = () => selAction(b.dataset.act); });
+function selAction(act) {
+  const s = selSnap;
+  if (!s) return;
+  endSel();
+  if (act === 'copy') { copyText(s.text, 'Copiato'); return; }
+  if (act === 'hl') {
+    const ch = s.parts.map((part) => { const a = newAnn(part); return { p: part.p, id: a.id, after: a }; });
+    commitAnns(ch);
+    toast(s.parts.length > 1 ? 'Evidenziato su ' + s.parts.length + ' pagine' : 'Evidenziato');
+    return;
+  }
+  // commento: si aggancia al testo della prima pagina della selezione
+  const part = s.parts[0], copy = act === 'copynote';
+  const only = s.parts.length > 1 ? ' (solo il testo di pagina ' + (nb.pages.indexOf(part.p) + 1) + ')' : '';
+  editNote({ p: part.p, quote: part.quote, copy, onSave: (txt) => {
+    const a = newAnn(part, txt);
+    if (copy) copyText(N.entryMarkdown(nb.node.name, { page: nb.pages.indexOf(part.p) + 1, q: a.q, n: a.n }), 'Salvato e copiato in Markdown: incollalo in Claude Code');
+    commitAnns([{ p: part.p, id: a.id, after: a }]);
+    if (!copy) toast((txt ? 'Commento salvato' : 'Evidenziato') + only);
+  } });
+}
+// la copia di sistema (⌘C, "Copia" di iOS) prende lo stesso testo pulito
+viewer.addEventListener('copy', (e) => {
+  const s = readSelection();
+  if (!s || !e.clipboardData) return;
+  e.clipboardData.setData('text/plain', s.text); e.preventDefault();
+});
+// tocco su un testo evidenziato (con lo strumento Seleziona) = apri l'evidenziazione
+viewer.addEventListener('click', (e) => {
+  if (S.tool !== 'select') return;
+  const sel = document.getSelection();
+  if (sel && !sel.isCollapsed) return;
+  const w = e.target.closest && e.target.closest('.page'), p = w && pageOf.get(w);
+  if (!p || !(p.rec.anns || []).length || e.target.closest('.ann-pin')) return;
+  const R = w.getBoundingClientRect(), x = (e.clientX - R.left) / R.width, y = (e.clientY - R.top) / R.height;
+  const a = p.rec.anns.find((q) => (q.r || []).some((r) => x >= r.l && x <= r.l + r.w && y >= r.t && y <= r.t + r.h));
+  if (a) annMenu(p, a.id);
+});
+
+// Safari: trascinando la maniglia nello spazio tra le righe, la selezione salterebbe a fine pagina. È il rimedio
+// del lettore di pdf.js: il blocco "fine contenuto" segue il punto che si sta spostando.
+let prevRange = null, pointerIsDown = false;
+const modernSel = (() => { const m = /\bChrome\/(\d+)\b/.exec(navigator.userAgent); return (!!m && +m[1] >= 148) || /Firefox\//.test(navigator.userAgent); })();
+function resetEnd(p) {
+  const t = p.tl;
+  if (!t || !t.end) return;
+  t.div.append(t.end); t.end.style.width = t.end.style.height = t.end.style.userSelect = '';
+  t.div.classList.remove('selecting');
+}
+document.addEventListener('pointerdown', () => { pointerIsDown = true; }, true);
+document.addEventListener('pointerup', () => { pointerIsDown = false; tlPages.forEach(resetEnd); }, true);
+window.addEventListener('blur', () => { pointerIsDown = false; tlPages.forEach(resetEnd); });
+document.addEventListener('keyup', () => { if (!pointerIsDown) tlPages.forEach(resetEnd); });
+function fixSelectionEnd() {
+  const sel = document.getSelection();
+  if (!sel || !sel.rangeCount) { tlPages.forEach(resetEnd); prevRange = null; return; }
+  const range = sel.getRangeAt(0);
+  for (const p of tlPages) { if (!p.tl || !p.tl.end) continue; if (range.intersectsNode(p.tl.div)) p.tl.div.classList.add('selecting'); else resetEnd(p); }
+  if (modernSel || !inTextLayer(range.startContainer) && !inTextLayer(range.endContainer)) return;
+  const modifyStart = !!prevRange && (range.compareBoundaryPoints(Range.END_TO_END, prevRange) === 0 || range.compareBoundaryPoints(Range.START_TO_END, prevRange) === 0);
+  let anchor = modifyStart ? range.startContainer : range.endContainer;
+  if (anchor.nodeType === 3) anchor = anchor.parentNode;
+  if (anchor.classList && (anchor.classList.contains('w') || anchor.classList.contains('g'))) anchor = anchor.parentNode;
+  if (!modifyStart && range.endOffset === 0) {
+    do {
+      while (anchor && !anchor.previousSibling) anchor = anchor.parentNode;
+      anchor = anchor && anchor.previousSibling;
+    } while (anchor && !anchor.childNodes.length);
+  }
+  const layer = anchor && anchor.parentElement && anchor.parentElement.closest('.textLayer');
+  const p = layer && pageOf.get(layer.parentElement);
+  if (p && p.tl && p.tl.end && p.tl.div === layer) {
+    const end = p.tl.end;
+    end.style.width = layer.style.width; end.style.height = layer.style.height; end.style.userSelect = 'text';
+    anchor.parentElement.insertBefore(end, modifyStart ? anchor : anchor.nextSibling);
+  }
+  prevRange = range.cloneRange();
+}
+
+// Copia negli appunti. Su iPad va chiamata subito dentro il tocco (niente attese prima);
+// se l'API moderna manca o rifiuta, vecchio metodo con un campo nascosto.
+function copyText(s, msg = 'Copiato') {
+  const legacy = () => {
+    const ta = el('textarea'); ta.value = s; ta.readOnly = true;
+    ta.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;padding:0;border:0;opacity:0;font-size:16px';
+    document.body.append(ta);
+    ta.focus({ preventScroll: true }); ta.select(); ta.setSelectionRange(0, s.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    ta.remove();
+    return ok;
+  };
+  const done = (ok) => { toast(ok ? msg : 'Non riesco a copiare: tieni premuto sul testo e scegli Copia', ok ? 2600 : 4500); return ok; };
+  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(s).then(() => done(true), () => done(legacy()));
+  return Promise.resolve(done(legacy()));
+}
+
+// ---------- Evidenziazioni e commenti (salvati nella pagina: seguono riordino, copia, export e OneDrive) ----------
+const annCopy = (a) => (a ? JSON.parse(JSON.stringify(a)) : null);
+function newAnn(part, note) {
+  const now = Date.now();
+  const a = { id: D.uid(), q: part.quote, c: S.hl.color, a: Math.max(0.2, Math.min(0.6, S.hl.alpha)), r: snapRects(part), t: now, u: now };
+  if (note) a.n = note;
+  return a;
+}
+function setAnn(p, id, val) {
+  const list = p.rec.anns || (p.rec.anns = []);
+  const i = list.findIndex((x) => x.id === id);
+  if (i >= 0) list.splice(i, 1);
+  if (val) list.push(annCopy(val));
+  N.sortAnns(list);
+  renderAnns(p); queueSave(p.rec); renderAnnList();
+}
+// changes: [{ p, id, after }] (after null = elimina); un solo passo di Annulla
+function commitAnns(changes) {
+  const ch = changes.map(({ p, id, after }) => ({ pid: p.rec.id, id, before: annCopy((p.rec.anns || []).find((x) => x.id === id)), after: annCopy(after) }));
+  for (const c of changes) setAnn(c.p, c.id, c.after);
+  pushAction({ type: 'ann', ch });
+}
+function renderAnns(p) {
+  p.anns.textContent = ''; p.pins.textContent = '';
+  const list = p.rec.anns || [], used = [];
+  for (const a of list) {
+    for (const r of a.r || []) {
+      const i = el('i', 'ann-r'); i.dataset.id = a.id;
+      i.style.left = r.l * 100 + '%'; i.style.top = r.t * 100 + '%'; i.style.width = r.w * 100 + '%'; i.style.height = r.h * 100 + '%';
+      i.style.background = a.c; i.style.opacity = String(a.a ?? HL_ALPHA);
+      p.anns.append(i);
+    }
+    if (!a.n || !(a.r || []).length) continue;
+    // icona del commento nel margine destro, all'altezza della prima riga (due commenti vicini: una sotto l'altra)
+    const ch = p.ch || fitWidth() * p.aspect, step = 46 / Math.max(200, ch);
+    let y = a.r[0].t + a.r[0].h / 2;
+    while (used.some((u) => Math.abs(u - y) < step)) y += step;
+    used.push(y);
+    const b = el('button', 'ann-pin'); b.type = 'button'; b.dataset.id = a.id;
+    b.style.top = 'calc(' + y * 100 + '% - 22px)';
+    b.setAttribute('aria-label', 'Commento: ' + a.n); b.title = a.n;
+    const dot = el('i'); dot.append(icon('comment')); b.append(dot);
+    b.onclick = () => annMenu(p, a.id);
+    p.pins.append(b);
+  }
+}
+const clip = (t, n) => (t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t);
+async function annMenu(p, id) {
+  const a = (p.rec.anns || []).find((x) => x.id === id);
+  if (!a) return;
+  endSel();
+  const i = nb.pages.indexOf(p);
+  const r = await modal({ title: (a.n ? 'Commento' : 'Testo evidenziato') + ' · pagina ' + (i + 1), text: '«' + clip(a.q, 240) + '»' + (a.n ? '\n\n' + a.n : ''), options: [
+    { label: a.n ? 'Modifica il commento' : 'Aggiungi un commento', value: 'edit', icon: 'comment' },
+    { label: 'Copia per Claude Code', value: 'copy', icon: 'copy-note' },
+    { label: a.n ? 'Elimina commento ed evidenziazione' : 'Togli l’evidenziazione', value: 'del', danger: true, icon: 'trash' }] });
+  if (!r) return;
+  if (r.value === 'copy') { copyText(N.entryMarkdown(nb.node.name, { page: i + 1, q: a.q, n: a.n }), 'Copiato in Markdown: incollalo in Claude Code'); return; }
+  if (r.value === 'del') { commitAnns([{ p, id, after: null }]); toast(a.n ? 'Commento eliminato' : 'Evidenziazione tolta'); return; }
+  editNote({ p, quote: a.q, value: a.n || '', color: a.c, onSave: (txt) => {
+    const v = annCopy(a); if (txt) v.n = txt; else delete v.n;
+    v.u = Date.now();
+    commitAnns([{ p, id, after: v }]);
+    toast(txt ? 'Commento salvato' : 'Commento tolto: resta l’evidenziazione');
+  } });
+}
+// piccolo editor del commento. onSave(testo) parte dentro il tocco su "Salva": così su iPad si può anche copiare subito
+const cdlg = $('cdlg');
+function editNote({ p, quote, value = '', color = S.hl.color, copy = false, onSave }) {
+  const ta = $('cdlg-text');
+  $('cdlg-title').textContent = (value ? 'Modifica il commento' : 'Commento') + ' · pagina ' + (nb.pages.indexOf(p) + 1);
+  $('cdlg-quote').textContent = '«' + clip(quote, 400) + '»';
+  $('cdlg-quote').style.setProperty('--c', color);
+  ta.value = value;
+  $('cdlg-ok').textContent = copy ? 'Salva e copia' : 'Salva';
+  const close = () => { if (cdlg.open) cdlg.close(); };
+  $('cdlg-ok').onclick = () => { const t = ta.value.trim(); close(); onSave(t); };
+  $('cdlg-cancel').onclick = close;
+  cdlg.showModal();
+  ta.focus();
+}
+cdlg.addEventListener('click', (e) => { if (e.target === cdlg) cdlg.close(); });
+
+// ---------- Pannello Commenti ed esportazione per Claude Code ----------
+function annEntries() {
+  const out = [];
+  nb.pages.forEach((p, i) => { for (const a of p.rec.anns || []) out.push({ p, a, page: i + 1, q: a.q, n: a.n }); });
+  return out;
+}
+function renderAnnList() {
+  const ul = $('ann-list'), info = $('ann-count');
+  ul.textContent = ''; info.textContent = '';
+  const list = annEntries(), nn = list.filter((x) => x.n).length;
+  $('btn-notes').dataset.n = list.length ? String(list.length) : '';
+  $('btn-md-copy').disabled = $('btn-md-share').disabled = !list.length;
+  if (!list.length) {
+    info.append('Ancora niente. Scegli lo strumento ', el('b', '', 'Seleziona'), ', tieni premuto su una frase del PDF e tocca ', el('b', '', 'Evidenzia'), ' o ', el('b', '', 'Commenta'), '.');
+    return;
+  }
+  info.textContent = [nn ? plural(nn, 'commento', 'commenti') : '', list.length - nn ? plural(list.length - nn, 'evidenziazione', 'evidenziazioni') : ''].filter(Boolean).join(' · ');
+  for (const e of list) {
+    const li = el('li'), go = el('button', 'row-go ann-row'); go.type = 'button';
+    const dot = el('i', 'adot'); dot.style.background = e.a.c;
+    const tx = el('span', 'tx'); tx.append(el('b', '', 'Pagina ' + e.page), el('span', 'q', '«' + e.a.q + '»'));
+    if (e.a.n) tx.append(el('span', 'nt', e.a.n));
+    go.append(dot, tx);
+    go.onclick = () => showAnn(e.p, e.a.id);
+    const more = el('button', 'mini'); more.type = 'button'; more.append(icon('more'));
+    more.setAttribute('aria-label', 'Modifica o elimina'); more.title = 'Modifica o elimina';
+    more.onclick = () => annMenu(e.p, e.a.id);
+    li.append(go, more); ul.append(li);
+  }
+}
+// porta in vista il testo evidenziato e lo fa lampeggiare
+function showAnn(p, id) {
+  const a = (p.rec.anns || []).find((x) => x.id === id);
+  if (!a) return;
+  if (!wide()) setSide(false);
+  goToPage(nb.pages.indexOf(p));
+  const r = (a.r || [])[0];
+  if (r) { jumped = true; viewer.scrollTop = Math.max(0, p.wrap.offsetTop + r.t * p.ch - viewer.clientHeight * 0.35); }
+  p.anns.querySelectorAll('.ann-r').forEach((x) => { if (x.dataset.id === id) { x.classList.remove('flash'); void x.offsetWidth; x.classList.add('flash'); } });
+}
+function openAnns() { setSide(true); showTab('anns'); }
+const allMarkdown = () => N.toMarkdown(nb.node.name, annEntries());
+$('btn-md-copy').onclick = () => {
+  const n = annEntries().length;
+  if (!n) { toast('Ancora nessun commento da copiare'); return; }
+  copyText(allMarkdown(), 'Copiate ' + plural(n, 'voce', 'voci') + ' in Markdown: incollale in Claude Code');
+};
+$('btn-md-share').onclick = async () => {
+  if (!annEntries().length) return;
+  const md = allMarkdown(), name = nb.node.name.replace(/[\\/:*?"<>|]/g, '_') + ' - commenti.md';
+  let file = new File([md], name, { type: 'text/markdown' });
+  if (navigator.canShare && !navigator.canShare({ files: [file] })) file = new File([md], name, { type: 'text/plain' });
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); return; } catch (err) { if (err && err.name === 'AbortError') return; }
+  }
+  const url = URL.createObjectURL(file), a = document.createElement('a');
+  a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  toast('File .md scaricato');
+};
 
 async function movePage(i, d) {
   await flush();
@@ -1284,7 +1831,7 @@ viewer.addEventListener('touchend', (e) => { if (e.touches.length < 2) endPinch(
 viewer.addEventListener('touchcancel', endPinch, { passive: true });
 let resizeTimer;
 window.addEventListener('resize', () => {
-  closePop();
+  closePop(); hideSelMenu();
   clearTimeout(resizeTimer);
   // girando l'iPad resto sulla stessa pagina (e nello stesso punto della pagina)
   resizeTimer = setTimeout(() => {
@@ -1364,7 +1911,7 @@ function attachDrawing(p) {
   }, { passive: false });
   c.addEventListener('contextmenu', (e) => e.preventDefault());
   c.addEventListener('pointerdown', (e) => {
-    if (S.tool === 'text' || !allowed(e) || pid !== null) return;
+    if (S.tool === 'text' || S.tool === 'select' || !allowed(e) || pid !== null) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
     if (!pop.hidden || !gotoEl.hidden) closePop();
@@ -1433,6 +1980,7 @@ const pageById = (id) => nb.pages.find((p) => p.rec.id === id);
 function pushAction(a) { nb.undo.push(a); nb.redo = []; updateUndoButtons(); }
 function updateUndoButtons() { $('btn-undo').disabled = !nb.undo.length; $('btn-redo').disabled = !nb.redo.length; }
 function applyUndo(a) {
+  if (a.type === 'ann') { for (const c of [...a.ch].reverse()) { const p = pageById(c.pid); if (p) setAnn(p, c.id, c.before); } return; }
   if (a.type === 'add') {
     const p = pageById(a.pid); if (!p) return;
     const i = p.rec.strokes.indexOf(a.stroke); if (i >= 0) p.rec.strokes.splice(i, 1);
@@ -1443,6 +1991,7 @@ function applyUndo(a) {
   }
 }
 function applyRedo(a) {
+  if (a.type === 'ann') { for (const c of a.ch) { const p = pageById(c.pid); if (p) setAnn(p, c.id, c.after); } return; }
   if (a.type === 'add') {
     const p = pageById(a.pid); if (!p) return;
     p.rec.strokes.push(a.stroke); ensureDraw(p); redrawPage(p); queueSave(p.rec);
@@ -1464,6 +2013,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (cmd && k.toLowerCase() === 's') { e.preventDefault(); saveNow(); return; }
   if (cmd && k.toLowerCase() === 'f') { e.preventDefault(); openFind(); return; }
+  if (k === 'Escape' && selSnap) { endSel(); return; }
   if (e.target.closest && e.target.closest('input, textarea')) return;
   if (cmd && k.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (!cmd && (k === 'ArrowRight' || k === 'ArrowLeft') && viewer.scrollWidth <= viewer.clientWidth + 2) { e.preventDefault(); goToPage(curIndex() + (k === 'ArrowRight' ? 1 : -1)); }
@@ -1570,7 +2120,7 @@ function paintDots() {
   $('tool-hl').querySelector('.dot').style.background = S.hl.color;
 }
 function paintPreview() {
-  const c = $('pop-preview'), ctx = c.getContext('2d'), W = c.width, H = c.height, hl = S.tool === 'hl', o = cfg();
+  const c = $('pop-preview'), ctx = c.getContext('2d'), W = c.width, H = c.height, hl = S.tool === 'hl' || S.tool === 'select', o = cfg();
   ctx.clearRect(0, 0, W, H);
   const k = W / 360; // il riquadro è largo ~360 punti: tratto alla stessa scala di una pagina larga ~760
   if (hl) { // tre righe di "testo" finto: l'evidenziatore passa su quella centrale, così si vede la trasparenza
@@ -1596,15 +2146,16 @@ function setSlider(id, frac) {
 }
 function paintColorChip() {
   paintDots();
-  const on = S.tool === 'pen' || S.tool === 'hl', o = S.tool === 'hl' ? S.hl : S.pen, sw = $('btn-color').querySelector('.swatch');
-  sw.style.background = o.color; sw.style.opacity = S.tool === 'hl' ? String(Math.max(0.45, o.alpha + 0.25)) : '1';
+  const hl = S.tool === 'hl' || S.tool === 'select', on = S.tool === 'pen' || hl, o = hl ? S.hl : S.pen, sw = $('btn-color').querySelector('.swatch');
+  sw.style.background = o.color; sw.style.opacity = hl ? String(Math.max(0.45, o.alpha + 0.25)) : '1';
   sw.style.setProperty('--sz', (10 + o.size * 1.4) + 'px');
   $('btn-color').disabled = !on;
 }
 function paintPop() {
-  const o = cfg(), hl = S.tool === 'hl';
-  $('pop-title').textContent = hl ? 'Evidenziatore' : 'Penna';
+  const o = cfg(), hl = S.tool === 'hl' || S.tool === 'select';
+  $('pop-title').textContent = S.tool === 'select' ? 'Colore per evidenziare il testo' : hl ? 'Evidenziatore' : 'Penna';
   $('row-alpha').hidden = !hl;
+  $('row-size').hidden = S.tool === 'select';
   const box = $('pop-colors');
   if (box.dataset.tool !== (hl ? 'hl' : 'pen')) {
     box.dataset.tool = hl ? 'hl' : 'pen'; box.textContent = '';
@@ -1660,23 +2211,27 @@ makeSlider('sl-size', () => (cfg().size - 1) / 9, (f) => { cfg().size = Math.rou
 makeSlider('sl-alpha', () => (S.hl.alpha - 0.1) / 0.8, (f) => { S.hl.alpha = Math.round((0.1 + f * 0.8) * 20) / 20; });
 
 function setTool(t) {
+  const was = S.tool;
   S.tool = t;
   document.querySelectorAll('.tool').forEach((x) => x.classList.toggle('active', x.dataset.tool === t));
   $('text-tools').hidden = t !== 'text';
   notebook.classList.toggle('mode-text', t === 'text');
+  notebook.classList.toggle('mode-select', t === 'select');
   paintColorChip();
-  for (const p of nb.pages) p.wrap.classList.toggle('textmode', t === 'text');
+  for (const p of nb.pages) { p.wrap.classList.toggle('textmode', t === 'text'); p.wrap.classList.toggle('selmode', t === 'select'); }
   closePop();
+  if (was === 'select' && t !== 'select') endSel();
+  if (t === 'select' && was !== 'select') startSelectMode();
 }
 document.querySelectorAll('.tool').forEach((b) => {
   b.onclick = () => {
     const t = b.dataset.tool;
     // secondo tocco sullo strumento attivo (penna o evidenziatore) = pannello colore e spessore
-    if (S.tool === t && (t === 'pen' || t === 'hl')) { if (justClosed()) return; pop.hidden ? openPop(b) : closePop(); return; }
+    if (S.tool === t && (t === 'pen' || t === 'hl' || t === 'select')) { if (justClosed()) return; pop.hidden ? openPop(b) : closePop(); return; }
     setTool(t);
   };
 });
-$('btn-color').onclick = () => { if (justClosed()) return; if (!pop.hidden) { closePop(); return; } if (S.tool === 'pen' || S.tool === 'hl') openPop($('tool-' + S.tool)); };
+$('btn-color').onclick = () => { if (justClosed()) return; if (!pop.hidden) { closePop(); return; } if (S.tool === 'pen' || S.tool === 'hl' || S.tool === 'select') openPop($('tool-' + S.tool)); };
 // tocco fuori dal pannello = chiudi. Su iPad dopo il tocco arriva anche un "click" sul pulsante sotto il dito:
 // se è lo stesso pulsante che apre il pannello, lo ignoro (altrimenti si riaprirebbe subito)
 let popClosedAt = 0;
@@ -1685,7 +2240,7 @@ popBack.addEventListener('pointerdown', (e) => { e.preventDefault(); closePop();
 paintColorChip();
 
 async function closeNotebook() {
-  closePop();
+  closePop(); endSel();
   await flush();
   saveLastPage();
   D.setMeta('open', null).catch(() => {});
@@ -1781,7 +2336,7 @@ $('btn-onedrive').onclick = () => Sync.signIn();
 $('btn-signout').onclick = async () => { $('settings').close(); if (await confirmDlg('Scollegare OneDrive?', 'I quaderni restano su questo dispositivo e su OneDrive.', 'Scollega')) Sync.signOut(); };
 Sync.onData(function applyRemote() {
   if (!library.hidden) { refreshLibrary(); return; }
-  if (nb.drawing || pending.size || document.activeElement?.closest?.('.txt')) { setTimeout(applyRemote, 1500); return; }
+  if (nb.drawing || pending.size || selSnap || $('cdlg').open || document.activeElement?.closest?.('.txt')) { setTimeout(applyRemote, 1500); return; }
   (async () => {
     const node = await D.get('nodes', nb.node.id);
     if (!node || node.deleted) { closeNotebook(); return; }
@@ -1833,4 +2388,5 @@ async function resumeLast() {
 
 // Appigli per i test automatici
 window.__penna = { D, Sync, S, nb, lib, openNotebook, refreshLibrary, exportBytes, flush, buildPages, setTool, runSearch, pdfjs, thumbUrl, version: APP_VERSION,
-  goToPage, curIndex, saveNow, saveSt, copyNotebook, runFind, closeNotebook, want, stats: () => ({ rendering, want: want.size, drawn: nb.pages.filter((p) => p.bg.width > 0).length }) };
+  goToPage, curIndex, saveNow, saveSt, copyNotebook, runFind, closeNotebook, want, stats: () => ({ rendering, want: want.size, drawn: nb.pages.filter((p) => p.bg.width > 0).length, textLayers: tlPages.size }),
+  N, readSelection, allMarkdown, tlPages, undo, redo, copyText };

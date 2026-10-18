@@ -43,7 +43,7 @@ export const now = () => Date.now();
 
 // ---- Modello ----
 // nodo:  { id, kind:'notebook'|'folder', parent:null|id, name, color, updated, deleted?, dirty, etag }
-// pagina:{ id, nb, order, type:'blank'|'lined'|'grid'|'pdf', blob?, pdfPage?, strokes:[], blocks:[], images:[], updated, deleted?, dirty, etag }
+// pagina:{ id, nb, order, type:'blank'|'lined'|'grid'|'pdf', blob?, pdfPage?, strokes:[], blocks:[], images:[], anns?:[] (evidenziazioni e commenti sul testo, vedi notes.js), bm?, updated, deleted?, dirty, etag }
 // blob:  { id, mime, name, data:ArrayBuffer, dirty, etag }
 export const COLORS = ['#C2664A', '#D9A441', '#7A9E6B', '#5B87A6', '#8C6BA8', '#6B6560'];
 
@@ -75,6 +75,6 @@ export async function deleteNode(n) {
   n.deleted = true; await saveNode(n);
 }
 export async function deletePage(p) {
-  p.deleted = true; p.strokes = []; p.blocks = []; p.images = [];
+  p.deleted = true; p.strokes = []; p.blocks = []; p.images = []; p.anns = [];
   await savePage(p);
 }

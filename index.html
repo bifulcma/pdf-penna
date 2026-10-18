@@ -60,6 +60,10 @@
 <symbol id="i-backspace" viewBox="0 0 24 24"><path d="M9.2 5.5h9.3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9.2a2 2 0 0 1-1.5-.7L3.5 12l4.2-5.8a2 2 0 0 1 1.5-.7z"/><path d="M11.8 9.5l5 5M16.8 9.5l-5 5"/></symbol>
 <symbol id="i-dup" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2M14 11.5v5M11.5 14h5"/></symbol>
 <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4.5h3.5a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H14M10 8l-4 4 4 4M6 12h9.5"/></symbol>
+<symbol id="i-select" viewBox="0 0 24 24"><path d="M8.5 4.5c1.9 0 3.5.8 3.5 2.4v10.2c0 1.6-1.6 2.4-3.5 2.4M15.5 4.5c-1.9 0-3.5.8-3.5 2.4M15.5 19.5c-1.9 0-3.5-.8-3.5-2.4M9.6 12h4.8"/></symbol>
+<symbol id="i-comment" viewBox="0 0 24 24"><path d="M6.5 4.8h11a2.5 2.5 0 0 1 2.5 2.5v7.2a2.5 2.5 0 0 1-2.5 2.5h-6.3l-4.4 3.3v-3.3h-.3A2.5 2.5 0 0 1 4 14.5V7.3a2.5 2.5 0 0 1 2.5-2.5z"/><path d="M8.3 9.3h7.4M8.3 12.3h4.6"/></symbol>
+<symbol id="i-copy-note" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2M11.5 12.3h5M11.5 15.3h3"/></symbol>
+<symbol id="i-md" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2.8"/><path d="M6.5 14.8V9.2l2.4 3 2.4-3v5.6M15.8 9.2v5.6M13.7 12.8l2.1 2.1 2.1-2.1"/></symbol>
 </defs></svg>
 
 <!-- Libreria -->
@@ -101,6 +105,7 @@
       <button id="tool-pen" class="ib tool active" type="button" data-tool="pen" aria-label="Penna" title="Penna"><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg><i class="dot"></i></button>
       <button id="tool-hl" class="ib tool" type="button" data-tool="hl" aria-label="Evidenziatore" title="Evidenziatore"><svg class="ic" aria-hidden="true"><use href="#i-hl"/></svg><i class="dot"></i></button>
       <button id="tool-eraser" class="ib tool" type="button" data-tool="eraser" aria-label="Gomma" title="Gomma"><svg class="ic" aria-hidden="true"><use href="#i-eraser"/></svg></button>
+      <button id="tool-select" class="ib tool" type="button" data-tool="select" aria-label="Seleziona testo" title="Seleziona testo (copia, evidenzia, commenta)"><svg class="ic" aria-hidden="true"><use href="#i-select"/></svg></button>
       <button id="tool-text" class="ib tool" type="button" data-tool="text" aria-label="Testo e immagini" title="Testo e immagini"><svg class="ic" aria-hidden="true"><use href="#i-text"/></svg></button>
       <button id="btn-color" class="ib chip" type="button" aria-label="Colore e spessore" title="Colore e spessore"><i class="swatch"></i></button>
       <span class="sep"></span>
@@ -118,6 +123,7 @@
       <button id="page-ind" type="button" aria-label="Vai a pagina" title="Vai a pagina"><span class="pre">Pagina </span><b id="pg-cur">1</b><span class="of"> di </span><span id="pg-tot">1</span></button>
       <button id="btn-next" class="ib" type="button" aria-label="Pagina successiva" title="Pagina successiva"><svg class="ic" aria-hidden="true"><use href="#i-down"/></svg></button>
       <button id="btn-bm" class="ib" type="button" aria-label="Segnalibro su questa pagina" title="Segnalibro su questa pagina"><svg class="ic" aria-hidden="true"><use href="#i-bookmark"/></svg></button>
+      <button id="btn-notes" class="ib" type="button" aria-label="Commenti ed evidenziazioni" title="Commenti ed evidenziazioni"><svg class="ic" aria-hidden="true"><use href="#i-comment"/></svg></button>
     </div>
    </div>
     <div id="text-tools" class="pillbar sub" hidden>
@@ -130,12 +136,13 @@
     </div>
   </div>
   <div id="nb-body">
-    <aside id="sidebar" aria-label="Pagine, segnalibri e ricerca">
+    <aside id="sidebar" aria-label="Pagine, segnalibri, ricerca e commenti">
       <div class="side-head"><b id="side-title"></b><span id="side-count"></span></div>
       <div class="seg" role="tablist">
         <button type="button" role="tab" data-tab="pages" class="on">Pagine</button>
         <button type="button" role="tab" data-tab="marks">Segnalibri</button>
         <button type="button" role="tab" data-tab="find">Cerca</button>
+        <button type="button" role="tab" data-tab="anns">Commenti</button>
       </div>
       <div class="tab" id="tab-pages">
         <ol id="page-list"></ol>
@@ -151,6 +158,14 @@
         <p id="find-status" class="side-empty">Scrivi una parola: la cerco in tutte le pagine del PDF e nelle tue note.</p>
         <ul id="find-list" class="side-list"></ul>
       </div>
+      <div class="tab" id="tab-anns" hidden>
+        <div class="side-top md-btns">
+          <button id="btn-md-copy" class="pill accent wide" type="button"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Copia tutto in Markdown</span></button>
+          <button id="btn-md-share" class="pill wide" type="button"><svg class="ic" aria-hidden="true"><use href="#i-md"/></svg><span>Condividi .md</span></button>
+        </div>
+        <p id="ann-count" class="side-empty"></p>
+        <ul id="ann-list" class="side-list"></ul>
+      </div>
     </aside>
     <div id="viewer"><div id="pages"></div></div>
     <div id="scrub" aria-hidden="true"><div id="scrub-thumb"><i></i><i></i></div><div id="scrub-tip"><b id="scrub-pg"></b><span id="scrub-of"></span></div></div>
@@ -164,7 +179,7 @@
   <div class="pop-head"><b id="pop-title">Penna</b><span id="pop-sub"></span></div>
   <canvas id="pop-preview" width="680" height="150"></canvas>
   <div id="pop-colors"></div>
-  <div class="srow"><span>Spessore</span><div id="sl-size" class="slider" role="slider" aria-label="Spessore" tabindex="0"><i class="track"></i><i class="fill"></i><i class="knob"></i></div><b id="sz-val">3</b></div>
+  <div class="srow" id="row-size"><span>Spessore</span><div id="sl-size" class="slider" role="slider" aria-label="Spessore" tabindex="0"><i class="track"></i><i class="fill"></i><i class="knob"></i></div><b id="sz-val">3</b></div>
   <div class="srow" id="row-alpha"><span>Opacità</span><div id="sl-alpha" class="slider" role="slider" aria-label="Opacità" tabindex="0"><i class="track"></i><i class="fill"></i><i class="knob"></i></div><b id="al-val">35%</b></div>
 </div>
 
@@ -181,6 +196,24 @@
     <button type="button" class="key soft" data-k="del" aria-label="Cancella"><svg class="ic" aria-hidden="true"><use href="#i-backspace"/></svg></button><button type="button" class="key" data-k="0">0</button><button type="button" class="key go" data-k="go">Vai</button>
   </div>
 </div>
+
+<!-- Menu sul testo selezionato -->
+<div id="selmenu" hidden role="toolbar" aria-label="Testo selezionato">
+  <button type="button" data-act="copy"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Copia</span></button>
+  <button type="button" data-act="hl"><i class="hdot"></i><span>Evidenzia</span></button>
+  <button type="button" data-act="note"><svg class="ic" aria-hidden="true"><use href="#i-comment"/></svg><span>Commenta</span></button>
+  <button type="button" data-act="copynote"><svg class="ic" aria-hidden="true"><use href="#i-copy-note"/></svg><span class="long">Copia con commento</span><span class="short">Copia + nota</span></button>
+</div>
+
+<!-- Commento su una frase -->
+<dialog id="cdlg">
+  <form method="dialog" id="cdlg-form">
+    <h3 id="cdlg-title">Commento</h3>
+    <blockquote id="cdlg-quote"></blockquote>
+    <textarea id="cdlg-text" rows="4" placeholder="Scrivi il tuo commento…" enterkeyhint="enter"></textarea>
+    <div class="dlg-btns"><button type="button" id="cdlg-cancel" class="pill plain">Annulla</button><button type="button" id="cdlg-ok" class="pill accent">Salva</button></div>
+  </form>
+</dialog>
 
 <!-- Finestra di dialogo generica -->
 <dialog id="dlg">
