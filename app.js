@@ -5,7 +5,7 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v9';
+const APP_VERSION = 'v10';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -1642,9 +1642,13 @@ const PRIVACY = 'Il testo selezionato viene inviato al tuo Mac Studio (e, se sce
 const PRIVACY_WEB = 'Con «Cerca sul web» la tua domanda e alcuni pezzi del testo possono uscire dal Mac Studio verso internet: con Claude li usa Anthropic per cercare e leggere pagine; con Qwen la ricerca va a Tavily (un servizio di ricerca). Le pagine trovate sono trattate come dati, non come ordini. Puoi spegnerlo quando vuoi.';
 const askEl = $('ask'), askAns = $('ask-answer');
 const askSt = { scope: 'page', sel: null, src: aiCfg.src === 'claude' ? 'claude' : 'qwen', ctrl: null, busy: false, stopped: false, last: null, answer: '', error: '', info: '', ctxInfo: '', model: '', thinking: false, saved: null,
-  found: [], numbered: false, searching: '', webOld: false };
+  found: [], numbered: false, searching: '', webOld: false,
+  queries: [], qPlanned: false, qFound: -1, qPoor: false, qedit: false, // ricerche fatte dal Mac (fase 9) e "Modifica ricerca"
+  snap: 'half', kbOn: false, kbPrev: null }; // altezza del pannello: compact | half | full; tastiera aperta
 // fonti da mostrare (e salvare) per la risposta di adesso: quelle citate, o le pagine consultate
 const askSources = () => (askSt.last && askSt.last.web ? A.collectSources(askSt.answer, askSt.found, askSt.numbered) : { list: [], cited: false });
+// le ricerche fatte davvero (per Copia e Salva come commento)
+const askQueries = () => (askSt.last && askSt.last.web && !askSt.webOld && !askSt.qPlanned ? askSt.queries : []);
 // il web per la sorgente scelta c'è sul Mac? (dall'ultima "Prova connessione"; se non si sa, si prova)
 const webHealth = (src) => { const h = aiCfg.health; return h && h['web_' + src] ? h['web_' + src] : null; };
 // testo di una pagina per l'assistente: testo del PDF e note scritte con la tastiera (non i commenti: lì ci sono anche le risposte salvate)
@@ -1666,19 +1670,24 @@ function openAsk(fromSel) {
   }
   endSel(); closePop();
   askSt.scope = askSt.sel ? 'sel' : 'page';
-  askSt.answer = ''; askSt.error = ''; askSt.last = null; askSt.saved = null;
+  askSt.answer = ''; askSt.error = ''; askSt.last = null; askSt.saved = null; askSt.queries = []; askSt.qedit = false;
+  askSt.snap = askSt.kbOn ? 'full' : 'half'; askSt.kbPrev = askSt.kbOn ? 'half' : null; // si apre a metà
+  askEl.classList.remove('closing'); askEl.style.setProperty('--ask-y', '0px'); askSizeKey = '';
   $('ask-input').value = ''; growAsk();
   askEl.hidden = false;
   paintAsk(); placeAsk();
 }
 function closeAsk() {
   if (askSt.busy) askStop();
-  askEl.hidden = true; askSt.sel = null;
+  clearTimeout(askCloseT);
+  askEl.hidden = true; askSt.sel = null; askSt.qedit = false;
+  askEl.classList.remove('closing', 'dragging'); askEl.style.setProperty('--ask-y', '0px');
   if (askEl.contains(document.activeElement)) document.activeElement.blur();
 }
 function paintAsk() {
   const ready = aiReady();
   $('ask-setup').hidden = ready; $('ask-main').hidden = !ready;
+  askEl.classList.toggle('setup', !ready);
   askEl.querySelectorAll('.ask-src button').forEach((b) => {
     const on = b.dataset.src === askSt.src, h = aiCfg.health && aiCfg.health[b.dataset.src];
     b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
@@ -1710,24 +1719,46 @@ function paintAsk() {
   $('ask-send').disabled = askSt.busy;
   paintAskWeb();
   paintAskOut();
+  placeAsk();
 }
 // interruttore "Cerca sul web" e la riga accanto: cosa fa con la sorgente scelta, o cosa manca sul Mac
 function paintAskWeb() {
   const on = !!aiCfg.web, b = $('ask-web'), wh = webHealth(askSt.src), note = $('ask-web-note');
   b.setAttribute('aria-checked', String(on)); b.classList.toggle('on', on); b.disabled = askSt.busy;
   const h = aiCfg.health, old = h && h.qwen && !h.web_claude; // bridge della fase 7: non sa cercare
-  note.classList.toggle('warn', on && (old || !!(wh && !wh.ok)));
+  const plain = h && h.web_claude && +h.version < 3; // bridge della fase 8: cerca con le parole della frase, non con ricerche mirate
+  note.classList.toggle('warn', on && (old || plain || !!(wh && !wh.ok)));
   note.textContent = !on ? 'Spento: solo il testo del PDF'
     : old ? 'Aggiorna il Mac Studio (rilancia l’installazione), poi Prova connessione'
       : wh && !wh.ok ? (askSt.src === 'qwen' ? 'Qwen: manca la chiave Tavily sullo Studio, usa Claude' : 'Claude: ' + (wh.error || 'non può cercare'))
-        : askSt.src === 'claude' ? 'Claude cerca, legge le pagine e cita le fonti' : 'Qwen legge i primi 5 risultati (Tavily) e li cita';
+        : plain ? 'Ricerche poco mirate: aggiorna il Mac Studio (rilancia l’installazione)'
+          : askSt.src === 'claude' ? 'Claude cerca, legge le pagine e cita le fonti' : 'Qwen sceglie le ricerche, legge le fonti migliori (Tavily) e le cita';
 }
 let askRaf = 0;
+// "Ho cercato: …" (o "Ricerche: …" mentre lavora), l'avviso se le fonti sono scarse, e "Modifica ricerca"
+function paintAskQueries() {
+  const l = askSt.last, has = !!(l && l.web && askSt.queries.length && !askSt.webOld);
+  $('ask-queries').hidden = !has || askSt.qedit;
+  $('ask-qedit').hidden = !(has && askSt.qedit);
+  if (!has) return;
+  $('ask-queries-t').textContent = A.queriesLabel(askSt.queries, askSt.busy ? 'busy' : askSt.qPlanned ? 'planned' : 'done');
+  const poor = $('ask-poor');
+  poor.hidden = askSt.busy || !askSt.qPoor;
+  poor.textContent = askSt.qFound === 0 ? 'Non ho trovato fonti affidabili sul web' : 'Ho trovato una sola fonte affidabile';
+  $('ask-qedit-open').hidden = askSt.busy;
+}
 function paintAskOut() {
   askRaf = 0;
   const out = $('ask-out'), shown = askSt.busy || askSt.answer || askSt.error;
-  out.hidden = !shown;
-  if (!shown) return;
+  out.hidden = false; // sempre: con il pannello alto, lo spazio della risposta c'è già
+  out.querySelector('.ask-btns').hidden = !shown;
+  askEl.classList.toggle('has-out', !!shown); // c'è una risposta: i comandi si fanno piccoli (vedi style.css)
+  paintAskQueries();
+  if (!shown) {
+    $('ask-info').textContent = ''; askAns.textContent = '';
+    askAns.append(el('p', 'ask-hint', 'La risposta comparirà qui. Per avere più spazio, trascina in su la barretta in cima al pannello.'));
+    return;
+  }
   const l = askSt.last;
   $('ask-info').textContent = askSt.info || (l ? [A.SOURCES[l.src].label, A.modelLabel(l.src, askSt.model), askSt.ctxInfo, l.web ? (askSt.webOld ? 'senza web: aggiorna il Mac Studio' : 'con il web') : ''].filter(Boolean).join(' · ') + (askSt.stopped && !askSt.busy && askSt.answer ? ' · fermata' : '') : '');
   const nearEnd = askAns.scrollHeight - askAns.scrollTop - askAns.clientHeight < 40;
@@ -1764,18 +1795,117 @@ function paintAskOut() {
   $('ask-copy').disabled = !has;
   const r = $('ask-retry');
   r.textContent = ''; r.append(icon(askSt.busy ? 'stop' : 'retry'), el('span', '', askSt.busy ? 'Ferma' : 'Riprova'));
+  r.setAttribute('aria-label', askSt.busy ? 'Ferma' : 'Riprova'); r.title = r.getAttribute('aria-label'); // su iPhone si vede solo l'icona
   r.disabled = !askSt.busy && !askSt.last;
 }
 const askLater = () => { if (!askRaf) askRaf = requestAnimationFrame(paintAskOut); };
-// tastiera dell'iPad aperta: il pannello sale sopra la tastiera
+// ---------- altezza del pannello: compatto (risposta + domanda), metà (con i comandi), quasi tutto schermo ----------
+// La maniglia in cima (e il titolo) si trascinano: al rilascio il pannello scatta sull'altezza più vicina (con la spinta
+// del dito); un tocco passa alla successiva; tirato giù sotto il compatto si chiude. Con la tastiera aperta il pannello
+// sta sopra la tastiera (visualViewport) e prende tutto lo spazio che resta, per leggere la risposta.
+const SNAPS = ['compact', 'half', 'full'];
+const stProbe = el('div'); // per leggere in px la zona sicura in alto (env(safe-area-inset-top))
+stProbe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:var(--st);visibility:hidden;pointer-events:none';
+document.body.append(stProbe);
+let askCtlH = 0, askCloseT = 0; // altezza naturale dei comandi (ultima misurata quando si vedono)
+function askSizes() {
+  const vv = window.visualViewport, vh = vv ? vv.height : innerHeight, top = vv ? vv.offsetTop : 0;
+  const bottom = parseFloat(getComputedStyle(askEl).bottom) || 0; // già sopra la tastiera (--kb)
+  const full = Math.max(200, Math.floor(innerHeight - bottom - top - stProbe.offsetHeight - (innerWidth <= 600 ? 8 : 12)));
+  const ctl = askEl.querySelector('.ask-ctl'), btns = askEl.querySelector('.ask-btns');
+  if (ctl.offsetParent && ctl.scrollHeight) askCtlH = ctl.scrollHeight;
+  // il resto (maniglia, titolo, campo domanda, righe sopra la risposta, bordi): non dipende dall'altezza scelta
+  const fixed = askEl.offsetHeight - (ctl.offsetParent ? ctl.offsetHeight : 0) - askAns.offsetHeight - (btns.offsetParent ? btns.offsetHeight + 10 : 0);
+  const compact = Math.min(full, Math.max(Math.round(vh * 0.4), fixed + 110));
+  const want = Math.max(Math.round(vh * 0.5), fixed + (askCtlH || 240) + 64 + 130); // metà schermo, ma con comandi e risposta interi
+  const half = Math.min(Math.max(compact + 1, full - 40), Math.max(compact + 60, want));
+  return { compact, half: Math.min(half, full), full };
+}
+// L'altezza si ricalcola solo se cambia la posizione scelta, lo schermo o la tastiera: non quando arriva la risposta
+// (il pannello non deve "muoversi" sotto il dito mentre si tocca un pulsante).
+let askSizeKey = '';
+function applySnap(force = false) {
+  if (askEl.hidden) return;
+  if (!aiReady()) { askEl.style.removeProperty('--ask-h'); askSizeKey = ''; return; } // pannello "collega il Mac": altezza del contenuto
+  const vv = window.visualViewport, key = [askSt.snap, askSt.kbOn, innerWidth, innerHeight, vv ? Math.round(vv.height) + ':' + Math.round(vv.offsetTop) : ''].join();
+  if (!force && key === askSizeKey) return;
+  askSizeKey = key;
+  const sz = askSizes();
+  askEl.classList.toggle('tight', askSt.kbOn && sz.full < 600); // tastiera aperta e poco spazio: solo domanda e risposta
+  for (const s of SNAPS) askEl.classList.toggle('snap-' + s, askSt.snap === s);
+  askEl.dataset.snap = askSt.snap;
+  askEl.style.setProperty('--ask-h', sz[askSt.snap] + 'px');
+}
+function setSnap(s) { if (!SNAPS.includes(s)) return; askSt.snap = s; askSt.kbPrev = null; applySnap(true); }
+const cycleSnap = () => setSnap(SNAPS[(SNAPS.indexOf(askSt.snap) + 1) % SNAPS.length]); // compatto → metà → tutto → compatto
+// tastiera dell'iPad aperta: il pannello sale sopra la tastiera e usa tutto lo spazio che resta (poi torna com'era)
 function placeAsk() {
   if (askEl.hidden) return;
   const vv = window.visualViewport;
-  const kb = vv ? Math.max(0, innerHeight - vv.height - vv.offsetTop) : 0;
+  const kb = vv ? Math.max(0, Math.round(innerHeight - vv.height - vv.offsetTop)) : 0;
   askEl.style.setProperty('--kb', kb + 'px');
   askEl.style.setProperty('--vh', (vv ? vv.height : innerHeight) + 'px');
+  const open = kb > 80; // con la tastiera esterna dell'iPad resta solo una barretta: non conta
+  if (open !== askSt.kbOn) {
+    askSt.kbOn = open;
+    if (open) { askSt.kbPrev = askSt.snap; askSt.snap = 'full'; }
+    else if (askSt.kbPrev) { askSt.snap = askSt.kbPrev; askSt.kbPrev = null; }
+  }
+  askEl.classList.toggle('kbopen', open);
+  applySnap();
 }
 if (window.visualViewport) { visualViewport.addEventListener('resize', placeAsk); visualViewport.addEventListener('scroll', placeAsk); }
+addEventListener('resize', placeAsk);
+let askDrag = null;
+function askGripDown(e) {
+  if (askEl.hidden || !aiReady() || e.target.closest('button, a, input, textarea, select')) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  askDrag = { id: e.pointerId, y: e.clientY, h: askEl.getBoundingClientRect().height, moved: false, pts: [[e.timeStamp, e.clientY]], sz: null };
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  e.preventDefault();
+}
+function askGripMove(e) {
+  const d = askDrag;
+  if (!d || e.pointerId !== d.id) return;
+  const dy = e.clientY - d.y;
+  if (!d.moved) { if (Math.abs(dy) < 7) return; d.moved = true; d.sz = askSizes(); askEl.classList.add('dragging'); }
+  d.pts.push([e.timeStamp, e.clientY]); if (d.pts.length > 8) d.pts.shift();
+  const h = d.h - dy, { compact, full } = d.sz;
+  askEl.style.setProperty('--ask-h', Math.round(Math.max(compact, Math.min(full + 16, h))) + 'px');
+  askEl.style.setProperty('--ask-y', Math.round(Math.max(0, compact - h)) + 'px'); // sotto il compatto scende, e lasciato giù si chiude
+  e.preventDefault();
+}
+function askGripUp(e) {
+  const d = askDrag;
+  if (!d || e.pointerId !== d.id) return;
+  askDrag = null; askEl.classList.remove('dragging');
+  if (!d.moved) { if (e.type === 'pointerup') cycleSnap(); return; } // un tocco: altezza successiva
+  let k = 0; // velocità degli ultimi ~100 ms (se il dito si è fermato prima di staccarsi, è quasi zero)
+  while (k < d.pts.length - 1 && e.timeStamp - d.pts[k][0] > 100) k++;
+  const [t0, y0] = d.pts[k], v = e.timeStamp > t0 ? (e.clientY - y0) / (e.timeStamp - t0) : 0; // px/ms, + = verso il basso
+  const h = d.h - (e.clientY - d.y), sz = d.sz;
+  askSt.fling = { v: Math.round(v * 100) / 100, h: Math.round(h), n: d.pts.length }; // per i test
+  if (h < sz.compact - 70 || (v > 0.7 && h < sz.compact + 10)) { // giù oltre la soglia (o una spinta decisa dal compatto): si chiude
+    askEl.classList.add('closing');
+    askCloseT = setTimeout(closeAsk, 200);
+    return;
+  }
+  askEl.style.setProperty('--ask-y', '0px');
+  const aim = h - v * 220; // con la spinta va dove stava andando
+  setSnap(SNAPS.reduce((b, s) => (Math.abs(sz[s] - aim) < Math.abs(sz[b] - aim) ? s : b), 'half'));
+}
+for (const t of [$('ask-grip'), askEl.querySelector('.ask-head')]) {
+  t.addEventListener('pointerdown', askGripDown);
+  t.addEventListener('pointermove', askGripMove);
+  t.addEventListener('pointerup', askGripUp);
+  t.addEventListener('pointercancel', askGripUp);
+}
+$('ask-grip').addEventListener('keydown', (e) => {
+  const i = SNAPS.indexOf(askSt.snap);
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cycleSnap(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); setSnap(SNAPS[Math.min(2, i + 1)]); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); setSnap(SNAPS[Math.max(0, i - 1)]); }
+});
 function growAsk() { const t = $('ask-input'); t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight + 2) + 'px'; t.style.overflowY = t.scrollHeight > 120 ? 'auto' : 'hidden'; }
 // scorrendo il PDF col pannello aperto, "Pagina N" segue la pagina che si sta leggendo
 function paintAskPage() {
@@ -1812,7 +1942,7 @@ async function askContext(scope, what, src) {
     return { ctx: { title, scope, docText: pick.text, docNote: pick.note }, info: pick.all ? 'Tutto il PDF (' + plural(pick.pages.length, 'pagina', 'pagine') + ' con testo)' : 'Ho incluso ' + A.pagesLabel(pick.pages, pick.total), pick };
   } finally { persistTexts(touched); }
 }
-async function askRun(what) {
+async function askRun(what, opts = {}) {
   if (askSt.busy) return;
   if (!aiReady()) { paintAsk(); return; }
   if (what.question !== undefined && !what.question.trim()) { $('ask-input').focus(); return; }
@@ -1821,10 +1951,12 @@ async function askRun(what) {
     if (!ok) return;
     aiCfg.privacy = 1; saveAi();
   }
-  const src = askSt.src, model = aiCfg.model[src] || '', web = !!aiCfg.web;
-  askSt.last = { what, scope: askSt.scope, src, model, web };
+  // opts.queries = ricerche corrette a mano ("Modifica ricerca"): si cerca sul web con quelle, così come sono
+  const src = askSt.src, model = aiCfg.model[src] || '', queries = opts.queries && opts.queries.length ? opts.queries : null, web = !!queries || !!aiCfg.web;
+  askSt.last = { what, scope: askSt.scope, src, model, web, queries };
   askSt.busy = true; askSt.stopped = false; askSt.answer = ''; askSt.error = ''; askSt.saved = null; askSt.thinking = false;
   askSt.found = []; askSt.numbered = false; askSt.searching = ''; askSt.webOld = false;
+  askSt.queries = queries || []; askSt.qPlanned = false; askSt.qFound = -1; askSt.qPoor = false; askSt.qedit = false;
   askSt.info = 'Preparo il testo…'; askSt.ctxInfo = ''; askSt.model = model;
   paintAsk();
   const c = await askContext(askSt.scope, what, src);
@@ -1833,7 +1965,13 @@ async function askRun(what) {
   askSt.info = ''; askSt.ctxInfo = c.info;
   askSt.pick = c.pick || null;
   const body = { provider: src, model, system: A.SYSTEM, messages: [{ role: 'user', content: A.buildMessage(c.ctx, what) }] };
-  if (web) { body.web = true; body.web_query = A.webQuery(c.ctx, what); askSt.searching = A.searchLabel(src === 'qwen' ? { q: body.web_query } : null); }
+  if (web) {
+    body.web = true;
+    body.web_ctx = A.webCtx(c.ctx, what); // il Mac Studio sceglie da qui le ricerche mirate (nomi propri, termini specifici)
+    body.web_query = queries ? queries[0] : A.webQuery(c.ctx, what); // solo per un bridge vecchio (fase 8)
+    if (queries) body.web_queries = queries;
+    askSt.searching = queries ? A.searchLabel({ q: queries[0] }) : 'Scelgo cosa cercare';
+  }
   askSt.sent = body; // per i test
   paintAskOut();
   await askStream(body);
@@ -1858,11 +1996,19 @@ async function askStream(body) {
     if (name === 'text') { askSt.answer += d.t || ''; askSt.thinking = false; askSt.searching = ''; askLater(); }
     else if (name === 'thinking') { if (!askSt.thinking && !askSt.answer) { askSt.thinking = true; askLater(); } }
     else if (name === 'search') { askSt.searching = A.searchLabel(d); askSt.thinking = false; askLater(); }
+    else if (name === 'status') { askSt.searching = String(d.t || '').slice(0, 120).replace(/…$/, ''); askSt.thinking = false; askLater(); }
+    else if (name === 'queries') {
+      askSt.queries = (Array.isArray(d.list) ? d.list : []).filter((x) => typeof x === 'string' && x.trim()).slice(0, 10).map((x) => x.slice(0, 200));
+      askSt.qPlanned = !!d.planned;
+      if (typeof d.found === 'number') { askSt.qFound = d.found; askSt.qPoor = !!d.poor; }
+      askLater();
+    }
     else if (name === 'sources') { askSt.found = Array.isArray(d.list) ? d.list.slice(0, 40) : []; askSt.numbered = !!d.numbered; }
     else if (name === 'meta') {
       if (d.model) askSt.model = d.model;
       if (body.web && d.web !== true) { askSt.webOld = true; askSt.searching = ''; } // bridge vecchio: ha risposto senza cercare
       else if (body.web && aiCfg.health && !aiCfg.health.web_claude) { aiCfg.health.web_claude = { ok: true, error: '' }; saveAi(); paintAskWeb(); } // Mac aggiornato nel frattempo
+      if (body.web && d.web === true && aiCfg.health && aiCfg.health.version !== String(d.version || '2')) { aiCfg.health.version = String(d.version || '2'); saveAi(); paintAskWeb(); } // versione del bridge (3 = ricerche mirate)
       askLater();
     }
     else if (name === 'error') err = d.message || 'errore sul Mac Studio';
@@ -1908,16 +2054,36 @@ $('ask-web').onclick = async () => {
 $('ask-form').onsubmit = (e) => { e.preventDefault(); const q = $('ask-input').value; askRun({ question: q }); };
 $('ask-input').addEventListener('input', growAsk);
 $('ask-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('ask-form').requestSubmit ? $('ask-form').requestSubmit() : $('ask-form').onsubmit(e); } });
-$('ask-input').addEventListener('focus', () => setTimeout(placeAsk, 350));
+for (const t of [$('ask-input'), $('ask-qedit-input')]) { // la tastiera si apre e si chiude con un po' di ritardo
+  t.addEventListener('focus', () => setTimeout(placeAsk, 350));
+  t.addEventListener('blur', () => setTimeout(placeAsk, 350));
+}
 $('ask-close').onclick = closeAsk;
 askEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeAsk(); } });
-$('ask-retry').onclick = () => { if (askSt.busy) { askStop(); return; } const l = askSt.last; if (!l) return; askSt.scope = l.scope; askRun(l.what); };
-$('ask-copy').onclick = () => { if (askSt.answer) copyText(A.withSources(askSt.answer, askSources().list), 'Risposta copiata'); };
+$('ask-retry').onclick = () => { if (askSt.busy) { askStop(); return; } const l = askSt.last; if (!l) return; askSt.scope = l.scope; askRun(l.what, { queries: l.queries }); };
+$('ask-copy').onclick = () => { if (askSt.answer) copyText(A.withSources(askSt.answer, askSources().list, askQueries()), 'Risposta copiata'); };
+// "Modifica ricerca": le ricerche fatte, una per riga; "Cerca di nuovo" rilancia la stessa richiesta con quelle
+$('ask-qedit-open').onclick = () => {
+  if (askSt.busy || !askSt.queries.length || !askSt.last) return;
+  askSt.qedit = true; paintAskQueries();
+  const t = $('ask-qedit-input'); t.value = askSt.queries.join('\n'); t.focus();
+  try { t.setSelectionRange(t.value.length, t.value.length); } catch {}
+};
+$('ask-qedit-cancel').onclick = () => { askSt.qedit = false; paintAskQueries(); };
+$('ask-qedit').onsubmit = (e) => {
+  e.preventDefault();
+  const list = A.parseQueries($('ask-qedit-input').value), l = askSt.last;
+  if (!list.length) { $('ask-qedit-input').focus(); return; }
+  if (!l || askSt.busy) return;
+  $('ask-qedit-input').blur();
+  askSt.scope = l.scope; askRun(l.what, { queries: list });
+};
+$('ask-qedit-input').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); askSt.qedit = false; paintAskQueries(); } });
 $('ask-save').onclick = () => {
   const s = askSt.sel, l = askSt.last;
   if (!s || !l || !askSt.answer || askSt.saved) return;
   if (!nb.pages.includes(s.p)) { toast('La pagina è stata ricaricata: seleziona di nuovo il testo'); return; }
-  const a = newAnn(s.part, A.commentText(l.what, l.src, askSt.model, askSt.answer, { web: !!l.web && !askSt.webOld, sources: askSources().list }));
+  const a = newAnn(s.part, A.commentText(l.what, l.src, askSt.model, askSt.answer, { web: !!l.web && !askSt.webOld, sources: askSources().list, queries: askQueries() }));
   if (s.rects && s.rects.length) a.r = s.rects;
   commitAnns([{ p: s.p, id: a.id, after: a }]);
   askSt.saved = a.id; paintAskOut();
@@ -1997,7 +2163,7 @@ async function testAi() {
     const r = await fetch(f.url + '/health?fresh=1', { headers: { Authorization: 'Bearer ' + f.token }, signal: ctrl.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' });
     let j = null; try { j = await r.json(); } catch {}
     if (!r.ok || !j || !j.qwen) throw Object.assign(new Error(A.errorText(r.status, j)), { said: true });
-    aiCfg.health = { at: Date.now(), qwen: j.qwen, claude: j.claude, web_claude: j.web_claude || null, web_qwen: j.web_qwen || null };
+    aiCfg.health = { at: Date.now(), version: String(j.version || ''), qwen: j.qwen, claude: j.claude, web_claude: j.web_claude || null, web_qwen: j.web_qwen || null };
     // la sorgente scelta non c'è sul Mac ma l'altra sì: passo all'altra
     if (!j[askSt.src].ok && j[askSt.src === 'qwen' ? 'claude' : 'qwen'].ok) { askSt.src = askSt.src === 'qwen' ? 'claude' : 'qwen'; aiCfg.src = askSt.src; }
     saveAi();
@@ -2783,4 +2949,4 @@ async function resumeLast() {
 // Appigli per i test automatici
 window.__penna = { D, Sync, S, nb, lib, openNotebook, refreshLibrary, exportBytes, flush, buildPages, setTool, runSearch, pdfjs, thumbUrl, version: APP_VERSION,
   goToPage, curIndex, saveNow, saveSt, copyNotebook, runFind, closeNotebook, want, stats: () => ({ rendering, want: want.size, drawn: nb.pages.filter((p) => p.bg.width > 0).length, textLayers: tlPages.size }),
-  N, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, test: testAi } };
+  N, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };

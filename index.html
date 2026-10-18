@@ -284,6 +284,7 @@
 
 <!-- Chiedi: pannello dal basso (le risposte arrivano dal Mac Studio) -->
 <section id="ask" hidden role="dialog" aria-labelledby="ask-title">
+  <div id="ask-grip" role="button" tabindex="0" aria-label="Maniglia del pannello: tocca per cambiare altezza, trascina in su o in giù (in fondo si chiude)" title="Tocca o trascina"><i></i></div>
   <div class="ask-head">
     <h3 id="ask-title"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg><span>Chiedi</span></h3>
     <div class="ask-src" role="radiogroup" aria-label="Chi risponde">
@@ -303,6 +304,7 @@
     <p class="ask-fine">Il resto dell’app funziona anche senza.</p>
   </div>
   <div id="ask-main">
+    <div class="ask-ctl">
     <div class="ask-scope" role="tablist" aria-label="Su cosa">
       <button type="button" role="tab" data-scope="sel">Selezione</button>
       <button type="button" role="tab" data-scope="page">Pagina</button>
@@ -314,17 +316,28 @@
       <button id="ask-web" type="button" role="switch" aria-checked="false"><span class="sw" aria-hidden="true"><i></i></span><svg class="ic" aria-hidden="true"><use href="#i-globe"/></svg><span>Cerca sul web</span></button>
       <span id="ask-web-note" class="ask-web-note"></span>
     </div>
+    </div>
     <form id="ask-form" autocomplete="off">
       <textarea id="ask-input" rows="1" placeholder="Fai una domanda…" enterkeyhint="send"></textarea>
       <button id="ask-send" class="ib" type="submit" aria-label="Invia la domanda" title="Invia"><svg class="ic" aria-hidden="true"><use href="#i-send"/></svg></button>
     </form>
     <div id="ask-out" hidden>
       <div id="ask-info" class="ask-info"></div>
+      <div id="ask-queries" class="ask-queries" hidden>
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <div class="q"><span id="ask-queries-t"></span><span id="ask-poor" class="poor" hidden></span></div>
+        <button id="ask-qedit-open" class="pill small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-edit"/></svg><span class="long">Modifica ricerca</span><span class="short">Modifica</span></button>
+      </div>
+      <form id="ask-qedit" class="ask-qedit" hidden autocomplete="off">
+        <label for="ask-qedit-input">Cosa cercare sul web (una ricerca per riga, al massimo 3)</label>
+        <textarea id="ask-qedit-input" rows="3" enterkeyhint="search" spellcheck="false"></textarea>
+        <div class="row"><button id="ask-qedit-cancel" class="pill small" type="button"><span>Annulla</span></button><button id="ask-qedit-go" class="pill accent small" type="submit"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><span>Cerca di nuovo</span></button></div>
+      </form>
       <div id="ask-answer" class="md" aria-live="polite"></div>
       <div class="ask-btns">
         <button id="ask-save" class="pill accent small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-comment"/></svg><span>Salva come commento</span></button>
-        <button id="ask-copy" class="pill small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Copia</span></button>
-        <button id="ask-retry" class="pill small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-retry"/></svg><span>Riprova</span></button>
+        <button id="ask-copy" class="pill small" type="button" aria-label="Copia" title="Copia"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Copia</span></button>
+        <button id="ask-retry" class="pill small" type="button" aria-label="Riprova" title="Riprova"><svg class="ic" aria-hidden="true"><use href="#i-retry"/></svg><span>Riprova</span></button>
       </div>
     </div>
   </div>

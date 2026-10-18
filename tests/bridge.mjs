@@ -235,7 +235,7 @@ try {
   ok('registro: niente token e niente testi delle domande', !logs.includes(A.token) && !logs.includes(B.token) && !logs.includes('libertà') && !logs.includes('Domanda segreta') && /ask qwen qwen3:14b/.test(logs));
   const src = fs.readFileSync(BRIDGE, 'utf8').replace(/^\s*#.*$/gm, '');
   ok('codice: niente shell (shell=True, os.system, os.popen), niente eval/exec/pickle', !/shell\s*=\s*True|os\.system|os\.popen|\beval\(|\bexec\(|pickle|commands\./.test(src));
-  ok('codice: un solo Popen, con argomenti in lista; host fisso 127.0.0.1', (src.match(/Popen\(/g) || []).length === 1 && /Popen\(self\.args\(\)/.test(src) && /HOST = '127\.0\.0\.1'/.test(src) && /Server\(\(HOST,/.test(src));
+  ok('codice: due Popen (risposta e, col web, scelta delle ricerche), entrambi con gli argomenti fissi in lista di self.args(); host fisso 127.0.0.1', (src.match(/Popen\(/g) || []).length === 2 && (src.match(/Popen\(self\.args\(/g) || []).length === 2 && /HOST = '127\.0\.0\.1'/.test(src) && /Server\(\(HOST,/.test(src));
   ok('codice: i file aperti sono solo token, config, claude-token nella cartella del bridge', [...src.matchAll(/(?<![A-Za-z_.])open\(([^,)]+)/g)].every((m) => /^(path|tok)$/.test(m[1].trim())), [...src.matchAll(/(?<![A-Za-z_.])open\(([^,)]+)/g)].map((m) => m[1]).join(' | '));
   const tokMode = fs.statSync(A.home + '/token').mode & 0o777;
   ok('token leggibile solo dal proprietario (600)', tokMode === 0o600, tokMode.toString(8));

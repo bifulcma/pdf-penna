@@ -22,7 +22,9 @@ if args[:2] == ['auth', 'status']:
 
 prompt = sys.stdin.read()
 web = '--tools' in args and args[args.index('--tools') + 1] == 'WebSearch,WebFetch'
-rec = {'argv': args, 'stdin': prompt, 'cwd': os.getcwd(), 'pid': os.getpid(), 'pgid': os.getpgid(0),
+system = next((a[len('--system-prompt='):] for a in args if a.startswith('--system-prompt=')), '')
+plan = not web and 'RICERCHE WEB' in system  # fase 9: il bridge chiede prima le ricerche (risposta JSON)
+rec = {'argv': args, 'stdin': prompt, 'plan': plan, 'cwd': os.getcwd(), 'pid': os.getpid(), 'pgid': os.getpgid(0),
        'api_key': 'ANTHROPIC_API_KEY' in os.environ, 'tavily_env': 'TAVILY_API_KEY' in os.environ, 'cwd_files': os.listdir('.'),
        'proxy': {k: os.environ.get(k) for k in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy', 'ALL_PROXY')}}
 
@@ -74,6 +76,17 @@ tools = ['WebFetch', 'WebSearch'] if web else []
 if 'STRUMENTI-INIT' in prompt:
     tools = tools + ['Bash']
 out({'type': 'system', 'subtype': 'init', 'tools': tools, 'mcp_servers': [], 'model': 'finto'})
+if plan:  # Sufyani = ricerche mirate; PIANO-ROTTO = niente JSON; PIANO-LENTO = non risponde; se no le ricerche di sempre
+    if 'PIANO-LENTO' in prompt:
+        time.sleep(60)
+    if 'PIANO-ROTTO' in prompt:
+        res = 'Non saprei.'
+    elif 'Sufyani' in prompt:
+        res = '```json\n' + json.dumps({'queries': ['Sufyani escatologia sciita', 'al-Sufyani Mahdi hadith'], 'keywords': ['Sufyani']}) + '\n```'
+    else:
+        res = json.dumps({'queries': ['Compagnia di Gesù fondazione 1540'], 'keywords': ['Compagnia di Gesù']})
+    out({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': res})
+    sys.exit(0)
 if 'LENTO' in prompt:
     time.sleep(60)
     sys.exit(0)

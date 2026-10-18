@@ -97,15 +97,15 @@ export function buildMessage(ctx, what) {
   out.push('', a ? a[ctx.scope] : 'Domanda: ' + String(what.question || '').trim() + '\nRispondi basandoti sul testo; se la risposta non c’è, dillo.');
   return out.join('\n');
 }
-// intestazione del commento salvato: si capisce subito da dove viene; col web, in fondo le fonti con gli URL
-export function commentText(what, src, model, answer, { web = false, sources = [] } = {}) {
+// intestazione del commento salvato: si capisce subito da dove viene; col web, in fondo le ricerche e le fonti con gli URL
+export function commentText(what, src, model, answer, { web = false, sources = [], queries = [] } = {}) {
   const a = what.action ? actionById(what.action) : null;
   const head = (a ? a.label : 'Domanda: ' + clipTo(String(what.question || '').trim(), 160)) + ' — ' + SOURCES[src].label + (src === 'claude' ? ' ' + modelLabel(src, model) : '') + (web ? ' · web' : '');
-  return '✦ ' + head + '\n\n' + withSources(answer, sources);
+  return '✦ ' + head + '\n\n' + withSources(answer, sources, queries);
 }
-// risposta + "Fonti:" numerate (per Salva come commento e Copia)
-export function withSources(answer, sources = []) {
-  const s = String(answer).trim();
+// risposta + "Ho cercato: …" + "Fonti:" numerate (per Salva come commento e Copia)
+export function withSources(answer, sources = [], queries = []) {
+  const s = String(answer).trim() + (queries.length ? '\n\nHo cercato: ' + queries.join('; ') : '');
   if (!sources.length) return s;
   return s + '\n\nFonti:\n' + sources.map((x, i) => (i + 1) + '. ' + (x.title && x.title !== x.url ? x.title + ' — ' : '') + x.url).join('\n');
 }
@@ -129,7 +129,43 @@ export function trimUrl(u) {
     return s;
   }
 }
-// cosa cercare (Qwen + Tavily): la domanda; se è corta, con l'argomento (frase selezionata o titolo). Senza domanda: la frase o il titolo.
+// Ricerca intelligente (bridge 3): il Mac Studio sceglie le ricerche da questo contesto (richiesta, frase, titolo, testo intorno),
+// mai dalle parole grezze della selezione. web_query qui sotto resta solo per i bridge vecchi (fase 8).
+export function webCtx(ctx, what) {
+  const a = what.action ? actionById(what.action) : null;
+  const one = (s, n) => clipTo(String(s || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(), n);
+  const out = { title: one(ctx.title, 300), question: one(a ? a[ctx.scope] : what.question, 2000), quote: '', near: '', page: ctx.page || 0 };
+  if (ctx.scope === 'sel') { out.quote = one(ctx.quote, 4000); out.near = around(ctx.pageText, ctx.quote, 3000); }
+  else if (ctx.scope === 'page') out.near = one(ctx.pageText, 4000);
+  else out.near = one(ctx.docText, 4000);
+  return out;
+}
+// il pezzo di pagina intorno alla frase selezionata (se la trova), se no l'inizio della pagina
+export function around(text, quote, n) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim(), qq = String(quote || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= n) return t;
+  const i = qq ? t.indexOf(qq.slice(0, 60)) : -1;
+  if (i < 0) return clipTo(t, n);
+  const from = Math.max(0, Math.min(i - Math.floor((n - qq.length) / 2), t.length - n)), more = from + n < t.length;
+  let s = t.slice(from, from + n);
+  if (from) s = s.replace(/^\S*\s/, ''); // niente mezze parole ai bordi
+  if (more) s = s.replace(/\s\S*$/, '');
+  return (from ? '… ' : '') + s + (more ? ' …' : '');
+}
+// "Modifica ricerca": una ricerca per riga (o separate da «;»), al massimo 3, senza doppioni
+export function parseQueries(text) {
+  const out = [], seen = new Set();
+  for (const raw of String(text || '').split(/[\n;]+/)) {
+    const s = raw.replace(/^\s*(?:[-*•]|\d{1,2}[.)])\s+/, '').replace(/["“”«»]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200).trim();
+    if (!s || seen.has(fold(s))) continue;
+    seen.add(fold(s)); out.push(s);
+    if (out.length === 3) break;
+  }
+  return out;
+}
+// "Ho cercato: a; b" a lavoro finito; "Ricerche: …" mentre cerca; "Ricerche previste: …" se Claude poi non ha cercato
+export const queriesLabel = (list, mode = 'done') => ({ busy: 'Ricerche: ', planned: 'Ricerche previste: ' }[mode] || 'Ho cercato: ') + list.join('; ');
+// cosa cercare per un bridge vecchio (fase 8): la domanda; se è corta, con l'argomento (frase selezionata o titolo).
 export function webQuery(ctx, what) {
   const one = (s) => String(s || '').replace(/\s+/g, ' ').trim();
   const cut = (s, n) => (s.length > n ? s.slice(0, n).replace(/\s+\S*$/, '') : s);

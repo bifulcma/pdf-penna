@@ -404,13 +404,42 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
 #selmenu .short { display: none; }
 #selmenu .ask-act { color: var(--accent); }
 
-/* ============ Chiedi: pannello dal basso ============ */
-#ask { --kb: 0px; --vh: 100vh; position: fixed; z-index: 50; left: 50%; bottom: calc(var(--sb) + 12px + var(--kb)); transform: translateX(-50%);
-  width: min(680px, calc(100vw - 24px)); max-height: min(74vh, 640px, calc(var(--vh) - var(--st) - 24px)); display: flex; flex-direction: column;
-  padding: 12px 14px 14px; border-radius: 24px; background: var(--bg); color: var(--ink); border: 1px solid var(--line-2); box-shadow: var(--shadow-3);
-  animation: askin .22s var(--ease); touch-action: manipulation; }
+/* ============ Chiedi: pannello dal basso, tre altezze (compatto, metà, quasi tutto schermo) ============ */
+/* --ask-h = altezza scelta (da app.js); --ask-y = quanto scende mentre lo trascini sotto il compatto; --kb = tastiera aperta */
+#ask { --kb: 0px; --vh: 100vh; --ask-y: 0px; position: fixed; z-index: 50; left: 50%; bottom: calc(var(--sb) + 12px + var(--kb)); transform: translate(-50%, var(--ask-y));
+  width: min(680px, calc(100vw - 24px)); height: var(--ask-h, auto); max-height: calc(var(--vh) - var(--st) - 12px); display: flex; flex-direction: column; overflow: hidden;
+  padding: 0 14px 14px; border-radius: 24px; background: var(--bg); color: var(--ink); border: 1px solid var(--line-2); box-shadow: var(--shadow-3);
+  animation: askin .22s var(--ease); touch-action: manipulation; transition: height .26s var(--ease), transform .26s var(--ease), opacity .18s; }
+#ask.closing { --ask-y: 70vh !important; opacity: 0; transition: transform .2s var(--ease), opacity .2s; }
+#ask.dragging { transition: none; }
+#ask.setup { height: auto; max-height: min(74vh, 640px, calc(var(--vh) - var(--st) - 24px)); }
 @keyframes askin { from { opacity: 0; transform: translate(-50%, 18px); } }
-.ask-head { display: flex; align-items: center; gap: 10px; flex: none; }
+#ask-grip { flex: none; display: flex; align-items: center; justify-content: center; height: 22px; margin: 0 -14px; border-radius: 24px 24px 0 0;
+  cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+#ask-grip i { display: block; width: 42px; height: 5px; border-radius: 3px; background: var(--line); transition: background-color .15s, width .15s; }
+#ask.dragging #ask-grip i, #ask-grip:active i { width: 54px; background: var(--ink-3); }
+#ask-grip:focus { outline: none; }
+#ask-grip:focus-visible i { background: var(--accent); width: 54px; }
+#ask.setup #ask-grip { cursor: default; }
+.ask-head { display: flex; align-items: center; gap: 10px; flex: none; touch-action: none; cursor: grab; }
+.ask-head button { cursor: pointer; }
+/* comandi (su cosa, frase, azioni, web): si stringono e scorrono se il pannello è basso; nascosti in compatto e con la tastiera */
+.ask-ctl { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 -3px; padding: 0 3px 3px; }
+#ask.snap-compact .ask-ctl, #ask.tight .ask-ctl, #ask.snap-compact .ask-btns, #ask.tight .ask-btns { display: none; }
+/* con una risposta (has-out) la risposta ha la precedenza: via la frase (la scheda dice già «Selezione · p. N»),
+   l'interruttore web va accanto alle azioni; nel compatto restano solo risposta e domanda */
+#ask.has-out #ask-quote, #ask.has-out .ask-web-note:not(.warn) { display: none; }
+#ask.has-out .ask-ctl { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+#ask.has-out .ask-scope { flex: 1 1 100%; margin-bottom: 2px; }
+#ask.has-out .ask-acts { display: contents; } /* i pulsanti delle azioni e l'interruttore scorrono sulle stesse righe */
+#ask.has-out .ask-web-row { flex: 0 1 auto; margin-top: 0; }
+#ask.has-out #ask-web .ic { display: none; }
+#ask.has-out #ask-web { padding-right: 8px; }
+#ask.snap-compact .ask-info, #ask.snap-compact .ask-queries { display: none; }
+/* tastiera aperta e poco spazio: via anche la riga informativa e il pulsante «Modifica ricerca» (la risposta prima di tutto) */
+#ask.tight .ask-info, #ask.tight #ask-qedit-open { display: none; }
+#ask.tight .ask-queries { padding: 6px 11px; }
+#ask.tight #ask-queries-t { -webkit-line-clamp: 1; }
 #ask-title { margin: 0 auto 0 4px; display: flex; align-items: center; gap: 7px; font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
 #ask-title .ic { color: var(--accent); width: 22px; height: 22px; }
 .ask-src { display: flex; gap: 2px; padding: 3px; border-radius: 14px; background: var(--bg-2); -webkit-user-select: none; user-select: none; }
@@ -422,7 +451,7 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
 .ask-src button.on b { color: var(--accent); }
 .ask-src button.off b { text-decoration: line-through; text-decoration-color: var(--ink-3); }
 @media (prefers-color-scheme: dark) { .ask-src button.on, .ask-scope button.on { background: #453E39; } }
-#ask-main { display: flex; flex-direction: column; flex: 1; min-height: 0; margin-top: 10px; }
+#ask-main { display: flex; flex-direction: column; flex: 1; min-height: 0; margin-top: 8px; }
 .ask-scope { display: flex; gap: 2px; padding: 3px; border-radius: 13px; background: var(--bg-2); flex: none; -webkit-user-select: none; user-select: none; }
 .ask-scope button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 0 6px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2);
   font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background-color .15s, color .15s; }
@@ -468,9 +497,11 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
 #ask-send .ic { stroke-width: 2.2; }
 #ask-send:active { background: var(--accent-press); }
 #ask-send:disabled { background: var(--line); color: var(--ink-3); opacity: 1; }
-#ask-out { display: flex; flex-direction: column; flex: 1; min-height: 0; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-2); }
-.ask-info { flex: none; margin: 0 2px 6px; font-size: 12.5px; font-weight: 550; color: var(--ink-3); }
-#ask-answer { flex: 1 1 auto; min-height: 64px; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0 2px 4px;
+/* niente min-height: 0 qui: la zona risposta tiene il suo minimo (righe sopra, 64 px di risposta, pulsanti) e sono i comandi a stringersi */
+#ask-out { display: flex; flex-direction: column; flex: 1 1 0; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-2); }
+.ask-info { flex: none; margin: 0 2px 6px; font-size: 12.5px; font-weight: 550; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ask-info:empty { display: none; }
+#ask-answer { flex: 1 1 0; min-height: 64px; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0 2px 4px;
   font-size: 16px; line-height: 1.5; -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 .md > :first-child { margin-top: 0; }
 .md p, .md ul, .md ol, .md blockquote, .md pre { margin: 0 0 .65em; }
@@ -485,6 +516,25 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
 .md .caret { display: inline-block; width: .5em; height: 1.05em; margin-left: 2px; border-radius: 2px; background: var(--accent); vertical-align: -3px; animation: caret 1s steps(2, jump-none) infinite; }
 @keyframes caret { 50% { opacity: .15; } }
 .ask-wait { color: var(--ink-2); font-style: italic; }
+.ask-hint { margin: 2px 2px 0; color: var(--ink-3); font-size: 15px; line-height: 1.45; }
+/* "Ho cercato: …" + Modifica ricerca (sopra la risposta, non scorre via) */
+.ask-queries { flex: none; display: flex; align-items: center; gap: 9px; margin: 0 0 8px; padding: 4px 4px 4px 11px; border-radius: 16px;
+  background: var(--surface); border: 1px solid var(--line-2); min-width: 0; }
+.ask-queries > .ic { width: 17px; height: 17px; color: var(--accent); flex: none; }
+.ask-queries .q { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; font-size: 13.5px; line-height: 1.3; color: var(--ink-2); }
+.ask-queries #ask-queries-t { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.ask-queries .poor { color: var(--danger); font-weight: 600; }
+.ask-queries .pill { flex: none; box-shadow: none; padding: 0 12px; gap: 6px; }
+.ask-queries .pill .ic { width: 17px; height: 17px; }
+.ask-queries .pill .short { display: none; }
+@media (max-width: 600px) { .ask-queries .pill .short { display: inline; } }
+.ask-qedit { flex: none; display: flex; flex-direction: column; gap: 8px; margin: 0 0 8px; padding: 10px; border-radius: 16px; background: var(--surface); border: 1px solid var(--accent-soft); }
+.ask-qedit label { font-size: 13.5px; font-weight: 600; color: var(--ink-2); margin: 0 2px; }
+#ask-qedit-input { width: 100%; min-height: 76px; max-height: 140px; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg);
+  color: var(--ink); font-size: 16px; line-height: 1.4; resize: none; -webkit-user-select: text; user-select: text; }
+#ask-qedit-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.ask-qedit .row { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.ask-qedit .pill { box-shadow: none; }
 .ask-err { display: flex; align-items: flex-start; gap: 10px; margin-top: 4px; padding: 12px 14px; border-radius: 14px; background: rgba(192, 65, 46, .08); color: var(--danger); font-size: 15px; line-height: 1.4; }
 .ask-err .ic { width: 21px; height: 21px; flex: none; }
 .ask-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; flex: none; }
@@ -718,9 +768,16 @@ dialog p:empty { display: none; }
   .card.folder .cover .ic { width: 25px; height: 25px; }
   dialog { width: 100%; max-width: 100%; margin: auto 0 0; border-radius: 24px 24px 0 0; padding-bottom: calc(var(--sb) + 16px); }
   #settings { width: 100%; }
-  #ask { left: 0; bottom: var(--kb); transform: none; width: 100%; max-height: min(86vh, calc(var(--vh) - var(--st) - 12px)); border-radius: 24px 24px 0 0;
-    border-width: 1px 0 0; padding: 12px 12px calc(var(--sb) + 12px); animation: askup .24s var(--ease); }
+  #ask { left: 0; bottom: var(--kb); transform: translateY(var(--ask-y)); width: 100%; max-height: calc(var(--vh) - var(--st) - 8px); border-radius: 24px 24px 0 0;
+    border-width: 1px 0 0; padding: 0 12px calc(var(--sb) + 12px); animation: askup .24s var(--ease); }
+  #ask.setup { max-height: min(86vh, calc(var(--vh) - var(--st) - 12px)); }
+  #ask.kbopen { padding-bottom: 10px; }
+  #ask-grip { margin: 0 -12px; }
   @keyframes askup { from { transform: translateY(30px); opacity: 0; } }
+  .ask-queries .pill .long { display: none; }
+  /* con una risposta, Copia e Riprova solo con l'icona: i pulsanti stanno su una riga e la risposta ha più spazio */
+  #ask.has-out #ask-copy span, #ask.has-out #ask-retry span { display: none; }
+  #ask.has-out #ask-copy, #ask.has-out #ask-retry { width: 44px; padding: 0; justify-content: center; }
   .ask-src button { min-width: 0; padding: 2px 11px; }
   .chip-act { padding: 0 13px; font-size: 14.5px; }
   #ask-web .ic { display: none; }

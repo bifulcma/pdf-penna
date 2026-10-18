@@ -27,7 +27,7 @@ const TOKEN = execFileSync(PY, ['-c', 'import secrets;print(secrets.token_urlsaf
 fs.writeFileSync(HOME + '/token', TOKEN + '\n', { mode: 0o600 });
 fs.writeFileSync(HOME + '/tavily.key', KEY + '\n', { mode: 0o600 });
 fs.writeFileSync(HOME + '/config.json', JSON.stringify({ port: 8799, ollama_url: 'http://127.0.0.1:11998', tavily_url: 'http://127.0.0.1:11996', allowed_origins: ['https://bifulcma.github.io', ORIGIN] }));
-const ol = await startOllama(11998, { delay: 60 });
+const ol = await startOllama(11998, { delay: 60, planDelay: 700 });
 const tv = await startTavily(11996, { delay: 1500 });
 const blog = HOME + '/bridge.log';
 const benv = { ...process.env, STUDIO_BRIDGE_HOME: HOME }; delete benv.TAVILY_API_KEY;
@@ -90,7 +90,7 @@ try {
   await device(P, 1024, 768);
   await P.goto(APP); await P.waitFor('window.__penna && document.getElementById("btn-new-nb")');
   await P.eval(SEL_FN + '; return 1');
-  ok('Safari vecchio emulato · versione v9', await q('window.__stripped===true && __penna.version==="v9" && typeof __penna.A.collectSources==="function"'));
+  ok('Safari vecchio emulato · versione v10', await q('window.__stripped===true && __penna.version==="v10" && typeof __penna.A.collectSources==="function"'));
   await P.setFiles('#pdf-input', [OUT + '/reale8.pdf']);
   await P.waitFor(`!document.getElementById('notebook').hidden && __penna.nb.pages[0] && __penna.nb.pages[0].wrap.dataset.rendered==='1'`, 20000, 'PDF aperto');
 
@@ -115,7 +115,7 @@ try {
   await tap(P, '#selmenu button[data-act="ask"]');
   await P.waitFor(`!document.getElementById('ask').hidden && !document.getElementById('ask-main').hidden`, 3000, 'pannello');
   ok('interruttore «Cerca sul web» nel pannello, SPENTO all’inizio («Spento: solo il testo del PDF»)', await q(`document.getElementById('ask-web').getAttribute('aria-checked')==='false' && document.getElementById('ask-web').getAttribute('role')==='switch' && /Cerca sul web/.test(document.getElementById('ask-web').textContent) && document.getElementById('ask-web-note').textContent==='Spento: solo il testo del PDF'`));
-  ok('interruttore: >= 44 px, nessun pulsante piccolo nel pannello', (await small(P)).length === 0 && (await rect(P, '#ask-web')).h >= 44, JSON.stringify(await small(P)));
+  ok('interruttore: >= 44 px, nessun pulsante piccolo nel pannello', (await small(P)).length === 0 && (await rect(P, '#ask-web')).h >= 44, JSON.stringify([await small(P), await rect(P, '#ask-web'), await rect(P, '#ask'), await rect(P, '.ask-ctl')]));
   await tap(P, '#ask-web');
   await P.waitFor(`document.getElementById('dlg').open`, 3000, 'avviso web');
   ok('prima accensione: avviso privacy (domanda ed estratti verso internet, Anthropic / Tavily, dati non ordini)', await q(`/possono uscire dal Mac Studio verso internet/.test(document.getElementById('dlg-text').textContent) && /Anthropic/.test(document.getElementById('dlg-text').textContent) && /Tavily/.test(document.getElementById('dlg-text').textContent) && /dati, non come ordini/.test(document.getElementById('dlg-text').textContent)`));
@@ -124,7 +124,7 @@ try {
   ok('«Lascia spento» → resta spento, niente salvato', await q(`document.getElementById('ask-web').getAttribute('aria-checked')==='false' && !JSON.parse(localStorage.getItem('penna.ai')).web`));
   await tap(P, '#ask-web'); await P.waitFor(`document.getElementById('dlg').open`, 3000, 'avviso web 2');
   await tapOpt('Accendi la ricerca sul web'); await sleep(250);
-  ok('«Accendi» → acceso, ricordato; la riga dice cosa fa con Qwen', await q(`document.getElementById('ask-web').getAttribute('aria-checked')==='true' && JSON.parse(localStorage.getItem('penna.ai')).web===true && document.getElementById('ask-web-note').textContent==='Qwen legge i primi 5 risultati (Tavily) e li cita'`));
+  ok('«Accendi» → acceso, ricordato; la riga dice cosa fa con Qwen', await q(`document.getElementById('ask-web').getAttribute('aria-checked')==='true' && JSON.parse(localStorage.getItem('penna.ai')).web===true && document.getElementById('ask-web-note').textContent==='Qwen sceglie le ricerche, legge le fonti migliori (Tavily) e le cita'`));
   await tap(P, '#ask-web'); await sleep(200);
   const offNoDlg = await q(`!document.getElementById('dlg').open && document.getElementById('ask-web').getAttribute('aria-checked')==='false'`);
   await tap(P, '#ask-web'); await sleep(200);
@@ -152,9 +152,9 @@ try {
   await P.waitFor(`!!document.querySelector('#ask-answer .ask-search')`, 5000, 'sto cercando');
   await shot(P, 'ipad-web-sto-cercando');
   const f1 = await follow();
-  ok(`durante il lavoro: «Sto cercando: «La Compagnia di Gesù fu approvata nel 1540»…»`, f1.searching.includes('Sto cercando: «La Compagnia di Gesù fu approvata nel 1540»…'), JSON.stringify(f1.searching));
+  ok(`durante il lavoro: «Scelgo cosa cercare…», poi «Sto cercando: «Compagnia di Gesù approvazione 1540»…» (la ricerca scelta da Qwen)`, f1.searching.includes('Scelgo cosa cercare…') && f1.searching.includes('Sto cercando: «Compagnia di Gesù approvazione 1540»…'), JSON.stringify(f1.searching));
   const tq = tv.st.requests[tv.st.requests.length - 1];
-  ok('a Tavily (sul Mac): la frase selezionata come ricerca; a Qwen: le fonti numerate', tv.st.requests.length === 1 && tq.body.query === 'La Compagnia di Gesù fu approvata nel 1540' && /Fonti dal web/.test(lastReq().messages[1].content) && /\[1\] Compagnia di Gesù — Wikipedia/.test(lastReq().messages[1].content), JSON.stringify(tq.body));
+  ok('a Tavily (sul Mac): la ricerca scelta da Qwen, non la frase grezza; a Qwen: le fonti numerate', tv.st.requests.length === 1 && tq.body.query === 'Compagnia di Gesù approvazione 1540' && /Fonti dal web/.test(lastReq().messages[1].content) && /\[1\] Compagnia di Gesù — Wikipedia/.test(lastReq().messages[1].content), JSON.stringify(tq.body));
   const s1 = await sources();
   ok('sotto la risposta: «Fonti» = le 2 citate [1][2], in ordine, con titolo e sito', s1 && s1.head === 'Fonti' && s1.items.length === 2 && s1.items[0].t === 'Compagnia di Gesù — Wikipedia' && s1.items[0].h === 'it.wikipedia.org' && s1.items[1].t === 'Chi sono i Gesuiti' && s1.items[1].h === 'ilpost.it', JSON.stringify(s1));
   ok('le fonti sono link veri: https, nuova scheda (target _blank), rel noopener noreferrer, alti >= 44 px', s1.items.every((i) => /^https:\/\//.test(i.href) && i.target === '_blank' && i.rel === 'noopener noreferrer' && i.height >= 44), JSON.stringify(s1.items));
@@ -198,7 +198,7 @@ try {
   await P.eval(`const h=__penna.ask.cfg.health; delete h.web_claude; delete h.web_qwen; document.querySelector('.ask-src button[data-src=qwen]').click(); return 1`); await sleep(100);
   ok('stato ricordato di un bridge vecchio: «Aggiorna il Mac Studio (rilancia l’installazione), poi Prova connessione»', await q(`document.getElementById('ask-web-note').textContent==='Aggiorna il Mac Studio (rilancia l’installazione), poi Prova connessione' && document.getElementById('ask-web-note').classList.contains('warn')`));
   await tap(P, '#ask-retry'); await follow();
-  ok('…il Mac risponde «col web» → la riga torna normale da sola', await q(`document.getElementById('ask-web-note').textContent==='Qwen legge i primi 5 risultati (Tavily) e li cita' && !!__penna.ask.cfg.health.web_claude`) && !!(await sources()));
+  ok('…il Mac risponde «col web» → la riga torna normale da sola', await q(`document.getElementById('ask-web-note').textContent==='Qwen sceglie le ricerche, legge le fonti migliori (Tavily) e le cita' && !!__penna.ask.cfg.health.web_claude`) && !!(await sources()));
 
   // ======================= Claude VERO col web =======================
   await tap(P, '.ask-src button[data-src="claude"]');

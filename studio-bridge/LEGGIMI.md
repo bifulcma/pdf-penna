@@ -27,7 +27,13 @@ Se manca qualcosa (Ollama, un modello Qwen, il login di Claude, i certificati ht
 Nel pannello **Chiedi** c'è l'interruttore **Cerca sul web** (spento all'inizio; la scelta resta ricordata).
 
 - **Claude + web** — funziona subito. Claude può usare **solo** la ricerca web e la lettura di pagine: niente comandi, niente file del Mac. Cita le fonti con i link.
-- **Qwen + web** — serve una chiave **Tavily** (gratis fino a 1000 ricerche al mese). Il Mac cerca con Tavily e passa a Qwen i primi 5 risultati come fonti numerate [1] [2]…
+- **Qwen + web** — serve una chiave **Tavily** (gratis fino a 1000 ricerche al mese). Il Mac cerca con Tavily e passa a Qwen le fonti migliori (al massimo 6) numerate [1] [2]…
+
+**Ricerche mirate** (bridge versione 3, ottobre 2026): prima di cercare, il modello scelto (Qwen o Claude) legge la domanda, la frase selezionata, il titolo e il testo intorno e propone 1-3 ricerche con i **nomi propri e i termini specifici** (per «le armate del tiranno Sufyani» cerca «Sufyani escatologia sciita», non «tiranno»), se serve anche in inglese o con il nome traslitterato.
+- Nell'app, sopra la risposta, compare **«Ho cercato: …»** con il pulsante **Modifica ricerca**: correggi le ricerche (una per riga) e tocca **Cerca di nuovo**.
+- Qwen: risultati senza doppioni, senza forum, social e siti di compiti; prima enciclopedie, università, riviste e istituzioni. Se i risultati sono pochi o fuori tema riprova **una volta** con una ricerca diversa; se ancora niente, lo dice: *«Non ho trovato fonti affidabili sul web»*.
+- Claude: riceve le ricerche proposte come punto di partenza e l'istruzione di partire dai nomi propri, fare 2-3 ricerche diverse, verificare su più fonti autorevoli e citare gli URL.
+- Per averle basta aggiornare il Mac Studio (rilancia la riga di installazione: alla fine scrive «Bridge: versione 3»). Finché non lo fai, l'app avvisa «Ricerche poco mirate: aggiorna il Mac Studio».
 
 Per mettere la chiave Tavily:
 
@@ -71,5 +77,5 @@ Senza chiave, con Qwen + web compare: *"Per Qwen col web serve la chiave Tavily 
 - Ogni richiesta vuole `Authorization: Bearer <token>`; CORS solo per `https://bifulcma.github.io`; al massimo 2 domande insieme, 2 MB per domanda, 5 minuti per risposta.
 - Claude parte come `claude -p --tools "" --no-session-persistence --safe-mode --restricted --strict-mcp-config …` (nessuno strumento, niente CLAUDE.md, MCP, plugin o hook), la domanda arriva da stdin, la chiave API eventualmente presente nell'ambiente viene tolta.
 - Col web: `--tools WebSearch,WebFetch --allowedTools WebSearch,WebFetch --permission-mode dontAsk`, da una cartella temporanea vuota (poi cancellata). Se Claude prova un altro strumento, o fa più di 10 ricerche/letture, il bridge lo ferma. Tutto il suo traffico passa da un proxy interno al bridge che lascia uscire solo verso internet pubblico (https porta 443, http porta 80): bloccati questo Mac, la rete di casa, Tailscale (100.x), indirizzi "travestiti" e IPv6 locali. Le pagine trovate sono trattate come dati, non istruzioni.
-- Qwen col web: il bridge chiama solo `https://api.tavily.com` (chiave nell'header, mai nei registri), passa a Qwen titolo, URL ed estratto dei primi 5 risultati tra virgolette, e gli chiede di rispondere solo su quelle fonti citando [1] [2]. `/health` dice `web_claude` e `web_qwen` (ok / manca la chiave), mai la chiave.
+- Qwen col web: il bridge chiede prima a Qwen le ricerche (JSON, senza strumenti), poi chiama solo `https://api.tavily.com` (chiave nell'header, mai nei registri), tiene le fonti pertinenti e affidabili e passa a Qwen titolo, URL ed estratto tra virgolette, chiedendogli di rispondere solo su quelle fonti citando [1] [2]. Le ricerche e i testi non finiscono mai nei registri. `/health` dice `web_claude` e `web_qwen` (ok / manca la chiave), mai la chiave.
 - Avvio automatico: `~/Library/LaunchAgents/com.marco.studio-bridge.plist` (riparte da solo se si ferma).

@@ -227,7 +227,8 @@ q, c = h.get("qwen", {}), h.get("claude", {})
 print("    Qwen:   " + ("✓ " + q.get("default", "") if q.get("ok") else "✗ " + q.get("error", "")))
 print("    Claude: " + ("✓ abbonamento " + c.get("plan", "") if c.get("ok") else "✗ " + c.get("error", "")))
 wc, wq = h.get("web_claude", {}), h.get("web_qwen", {})
-print("    Web:    Claude " + ("✓" if wc.get("ok") else "✗") + " · Qwen " + ("✓" if wq.get("ok") else "✗ " + wq.get("error", "")))' 2>/dev/null || true
+print("    Web:    Claude " + ("✓" if wc.get("ok") else "✗") + " · Qwen " + ("✓" if wq.get("ok") else "✗ " + wq.get("error", "")))
+print("    Bridge: versione " + str(h.get("version", "?")) + (" (ricerche web mirate)" if str(h.get("version", "")) >= "3" else ""))' 2>/dev/null || true
 
   # ---------- 9. Tailscale Serve: https://<nome-del-mac>.<tua-rete>.ts.net → bridge (solo dentro la rete Tailscale) ----------
   step "Tailscale Serve (https per l'iPad)"

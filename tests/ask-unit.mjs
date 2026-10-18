@@ -93,5 +93,29 @@ ok('401 → token non giusto', /token non è giusto/.test(A.errorText(401, null)
 ok('503 con messaggio del bridge → quel messaggio', A.errorText(503, { error: 'Ollama non risponde' }) === 'Ollama non risponde');
 ok('rete giù → "Lo Studio non risponde: è acceso? Tailscale è attivo sull’iPad?"', A.MSG_DOWN === 'Lo Studio non risponde: è acceso? Tailscale è attivo sull’iPad?');
 
+// ---------- fase 9: contesto per le ricerche mirate, "Modifica ricerca" ----------
+const SUF = 'Allora sterminerà le armate del tiranno Sufyani e riempirà la terra di giustizia.';
+const pageT = 'Prima. '.repeat(900) + SUF + ' Dopo. '.repeat(900);
+const wc = A.webCtx({ title: 'Il ritorno del Mahdi', scope: 'sel', quote: SUF, page: 12, pageText: pageT }, { action: 'explain' });
+ok('webCtx (selezione): titolo, richiesta dell’azione, frase, pagina e il testo INTORNO alla frase (non l’inizio della pagina)',
+  wc.title === 'Il ritorno del Mahdi' && wc.question === A.actionById('explain').sel && wc.quote === SUF && wc.page === 12 && wc.near.includes(SUF) && wc.near.length <= 3010 && wc.near.startsWith('… Prima.') && wc.near.endsWith('Dopo. …'), wc);
+const wq = A.webCtx({ title: 'T', scope: 'sel', quote: SUF, page: 3, pageText: 'x' }, { question: '  Chi è il tiranno?  ' });
+ok('webCtx: la domanda scritta (spazi tolti); pagina corta = tutta', wq.question === 'Chi è il tiranno?' && wq.near === 'x');
+const wp = A.webCtx({ title: 'T', scope: 'page', page: 4, pageText: 'testo '.repeat(2000) }, { action: 'sum' });
+ok('webCtx (pagina): niente frase, il testo della pagina (al massimo 4000 caratteri), richiesta «Riassumi questa pagina…»', wp.quote === '' && wp.near.length <= 4010 && wp.question === A.actionById('sum').page && wp.page === 4);
+const wd = A.webCtx({ title: 'T', scope: 'doc', docText: 'abc', docNote: 'n' }, { question: 'q' });
+ok('webCtx (tutto il PDF): i passaggi scelti, pagina 0', wd.near === 'abc' && wd.page === 0 && wd.quote === '');
+ok('around: la frase anche se nella pagina va a capo diversamente', A.around('a '.repeat(3000) + 'del tiranno\nSufyani e riempirà ' + 'b '.repeat(3000), 'del tiranno Sufyani e riempirà', 200).includes('del tiranno Sufyani e riempirà'));
+ok('around: frase non trovata → l’inizio della pagina', A.around('inizio ' + 'z '.repeat(500), 'non c’è', 100).startsWith('inizio'));
+ok('parseQueries: una per riga o con «;», niente punti elenco, virgolette o doppioni, al massimo 3',
+  JSON.stringify(A.parseQueries('1. Sufyani escatologia\n- «al-Sufyani» Mahdi; sufyani ESCATOLOGIA\n\n  terza  \nquarta')) === JSON.stringify(['Sufyani escatologia', 'al-Sufyani Mahdi', 'terza']));
+ok('parseQueries: vuoto → []; una ricerca lunghissima tagliata a 200', A.parseQueries('  \n ; ').length === 0 && A.parseQueries('a'.repeat(300))[0].length === 200);
+ok('queriesLabel: «Ho cercato: a; b» / «Ricerche: …» mentre cerca / «Ricerche previste: …»',
+  A.queriesLabel(['a', 'b']) === 'Ho cercato: a; b' && A.queriesLabel(['a'], 'busy') === 'Ricerche: a' && A.queriesLabel(['a'], 'planned') === 'Ricerche previste: a');
+ok('withSources con le ricerche: risposta, «Ho cercato: …», poi «Fonti:»',
+  A.withSources('Risposta.', [{ title: 'W', url: 'https://w.org/a' }], ['Sufyani escatologia sciita', 'al-Sufyani']) === 'Risposta.\n\nHo cercato: Sufyani escatologia sciita; al-Sufyani\n\nFonti:\n1. W — https://w.org/a');
+ok('commentText col web: «✦ Spiega — Qwen · web», ricerche e fonti in fondo',
+  A.commentText({ action: 'explain' }, 'qwen', '', 'R', { web: true, sources: [{ title: 'W', url: 'https://w.org/a' }], queries: ['Sufyani'] }) === '✦ Spiega — Qwen · web\n\nR\n\nHo cercato: Sufyani\n\nFonti:\n1. W — https://w.org/a');
+
 console.log(`\n${pass} ok, ${fail} falliti`);
 process.exit(fail ? 1 : 0);
