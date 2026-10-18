@@ -2,3 +2,4 @@ claude_out.txt
 .DS_Store
 .env*
 claude_out*.txt
+__pycache__/

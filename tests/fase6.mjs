@@ -92,7 +92,7 @@ try {
   await device(P, 1024, 768);
   await P.goto(APP); await P.waitFor('window.__penna && document.getElementById("btn-new-nb")');
   await P.eval(SEL_FN + ALIGN_FN + '; return 1');
-  ok('Safari vecchio emulato (API moderne tolte, polyfill attivi) · versione v7', await P.eval('return window.__stripped===true && __penna.version==="v7"'));
+  ok('Safari vecchio emulato (API moderne tolte, polyfill attivi) · versione ' + await P.eval('return __penna.version'), await P.eval('return window.__stripped===true && +__penna.version.slice(1) >= 7'));
 
   // scansione: una pagina che è solo una foto di testo (preparata nel browser)
   const png = await P.eval(`const c=document.createElement('canvas'); c.width=1240; c.height=1754; const x=c.getContext('2d'); x.fillStyle='#f4f1ea'; x.fillRect(0,0,c.width,c.height); x.fillStyle='#222'; x.font='48px Georgia'; for(let i=0;i<20;i++) x.fillText('Testo fotografato, riga '+(i+1)+': non si può selezionare.', 110, 200+i*70); return c.toDataURL('image/png').split(',')[1]`);
@@ -156,7 +156,7 @@ try {
   await select(0, 'serve virtù e\npazienza.');
   const mr = await rect(P, '#selmenu'), sr = await P.eval(`const r=getSelection().getRangeAt(0).getClientRects(); const a=[...r].filter(x=>x.width>0); return {top:Math.min(...a.map(x=>x.top)), bottom:Math.max(...a.map(x=>x.bottom))}`);
   ok('selezione → menu a pillola vicino al testo (sotto o sopra), dentro lo schermo', mr.x >= 0 && mr.x + mr.w <= 1024 && mr.y > 60 && mr.y + mr.h < 768 && (Math.abs(mr.y - sr.bottom) < 40 || Math.abs(mr.y + mr.h - sr.top) < 40), JSON.stringify({ mr, sr }));
-  ok('menu: Copia · Evidenzia · Commenta · Copia con commento', await P.eval(`return [...document.querySelectorAll('#selmenu button')].map(b=>b.textContent.trim()).join('|')==='Copia|Evidenzia|Commenta|Copia con commentoCopia + nota'`),
+  ok('menu: Copia · Evidenzia · Commenta · Copia con commento', await P.eval(`return [...document.querySelectorAll('#selmenu button')].map(b=>b.textContent.trim()).join('|').startsWith('Copia|Evidenzia|Commenta|Copia con commentoCopia + nota')`),
     await P.eval(`return [...document.querySelectorAll('#selmenu button')].map(b=>b.innerText.trim()).join('|')`));
   ok('menu: pulsanti >= 44px', (await small(P)).length === 0, JSON.stringify(await small(P)));
   await shot(P, 'ipad-selezione-menu');

@@ -3,8 +3,9 @@ import * as Sync from './sync.js';
 import { buildNotebookPdf, LAYOUT, HL_ALPHA } from './pdfexport.js';
 import * as F from './find.js';
 import * as N from './notes.js';
+import * as A from './ask.js';
 
-const APP_VERSION = 'v7';
+const APP_VERSION = 'v8';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -764,6 +765,7 @@ function updatePageIndicator() {
   if (ol.children[lastCur]) ol.children[lastCur].classList.remove('cur');
   if (ol.children[i]) ol.children[i].classList.add('cur');
   lastCur = i;
+  paintAskPage();
   const bm = !!nb.pages[i].rec.bm;
   $('btn-bm').classList.toggle('on', bm);
   $('btn-bm').setAttribute('aria-pressed', String(bm));
@@ -794,7 +796,7 @@ function saveLastPageSoon() { clearTimeout(lpTimer); lpTimer = setTimeout(saveLa
 // tocchi sulla barra in basso: il palmo appoggiato mentre si scrive con la Pencil non deve cambiare pagina
 let lastPen = 0, barPointer = '';
 $('pagebar').addEventListener('pointerdown', (e) => { barPointer = e.pointerType; }, true);
-const palmTap = () => barPointer === 'touch' && performance.now() - lastPen < 700;
+const palmTap = () => barPointer === 'touch' && lastPen > 0 && performance.now() - lastPen < 700;
 $('btn-prev').onclick = () => { if (!palmTap()) goToPage(curIndex() - 1); };
 $('btn-next').onclick = () => { if (!palmTap()) goToPage(curIndex() + 1); };
 $('btn-bm').onclick = () => { if (!palmTap()) bookmarkPage(curIndex()); };
@@ -1389,6 +1391,7 @@ selMenu.querySelectorAll('button').forEach((b) => { b.onclick = () => selAction(
 function selAction(act) {
   const s = selSnap;
   if (!s) return;
+  if (act === 'ask') { openAsk(true); return; }
   endSel();
   if (act === 'copy') { copyText(s.text, 'Copiato'); return; }
   if (act === 'hl') {
@@ -1626,6 +1629,338 @@ $('btn-md-share').onclick = async () => {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
   toast('File .md scaricato');
 };
+
+// ---------- Chiedi: domande sul testo al Mac Studio (Qwen gratis sul Mac, o Claude con l'abbonamento) ----------
+// Indirizzo e token restano solo su questo dispositivo (localStorage, non vanno su OneDrive). Non parte niente
+// senza un tocco su un'azione o su Invia; la prima volta un avviso dice dove va il testo.
+const AI_KEY = 'penna.ai';
+const aiCfg = (() => { try { return JSON.parse(localStorage.getItem(AI_KEY)) || {}; } catch { return {}; } })();
+aiCfg.model = aiCfg.model || {};
+const saveAi = () => { try { localStorage.setItem(AI_KEY, JSON.stringify(aiCfg)); } catch {} };
+const aiReady = () => !!(aiCfg.url && aiCfg.token);
+const PRIVACY = 'Il testo selezionato viene inviato al tuo Mac Studio (e, se scegli Claude, a Anthropic con il tuo abbonamento). Non parte niente finché non tocchi un’azione o Invia.';
+const askEl = $('ask'), askAns = $('ask-answer');
+const askSt = { scope: 'page', sel: null, src: aiCfg.src === 'claude' ? 'claude' : 'qwen', ctrl: null, busy: false, stopped: false, last: null, answer: '', error: '', info: '', ctxInfo: '', model: '', thinking: false, saved: null };
+// testo di una pagina per l'assistente: testo del PDF e note scritte con la tastiera (non i commenti: lì ci sono anche le risposte salvate)
+async function aiPageText(rec, touched) {
+  const notes = (rec.blocks || []).map(blockText).filter(Boolean).join('\n');
+  if (rec.type !== 'pdf') return notes;
+  const t = await pdfText(rec, touched);
+  return notes ? t + '\n' + notes : t;
+}
+function persistTexts(touched) {
+  for (const id of touched) { const m = textMem.get(id); if (!m) continue; const arr = []; m.forEach((s, k) => { arr[k] = s; }); D.setMeta('tx:' + id, arr).catch(() => {}); }
+}
+function openAsk(fromSel) {
+  if (askSt.busy) askStop();
+  askSt.sel = null;
+  if (fromSel && selSnap) {
+    const part = selSnap.parts[0];
+    askSt.sel = { p: part.p, part, text: selSnap.text, page: nb.pages.indexOf(part.p) + 1, rects: snapRects(part) };
+  }
+  endSel(); closePop();
+  askSt.scope = askSt.sel ? 'sel' : 'page';
+  askSt.answer = ''; askSt.error = ''; askSt.last = null; askSt.saved = null;
+  $('ask-input').value = ''; growAsk();
+  askEl.hidden = false;
+  paintAsk(); placeAsk();
+}
+function closeAsk() {
+  if (askSt.busy) askStop();
+  askEl.hidden = true; askSt.sel = null;
+  if (askEl.contains(document.activeElement)) document.activeElement.blur();
+}
+function paintAsk() {
+  const ready = aiReady();
+  $('ask-setup').hidden = ready; $('ask-main').hidden = !ready;
+  askEl.querySelectorAll('.ask-src button').forEach((b) => {
+    const on = b.dataset.src === askSt.src, h = aiCfg.health && aiCfg.health[b.dataset.src];
+    b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
+    b.classList.toggle('off', !!(h && !h.ok));
+    b.title = h && !h.ok ? h.error : A.SOURCES[b.dataset.src].long;
+  });
+  if (!ready) return;
+  const cur = curIndex() + 1;
+  askEl.querySelectorAll('.ask-scope button').forEach((b) => {
+    const s = b.dataset.scope;
+    b.hidden = s === 'sel' && !askSt.sel;
+    b.classList.toggle('on', s === askSt.scope); b.setAttribute('aria-selected', String(s === askSt.scope));
+    if (s === 'page') b.textContent = 'Pagina ' + cur;
+    if (s === 'sel' && askSt.sel) b.textContent = 'Selezione · p. ' + askSt.sel.page;
+  });
+  const q = $('ask-quote');
+  q.textContent = askSt.scope === 'sel' ? '«' + clip(askSt.sel.text, 320) + '»'
+    : askSt.scope === 'page' ? 'Il testo della pagina ' + cur + (nb.pages.length > 1 ? ' di ' + nb.pages.length : '')
+      : 'Le pagine del PDF che servono: le scelgo con le parole della tua domanda (e ti dico quali)';
+  q.classList.toggle('plain', askSt.scope !== 'sel');
+  const acts = $('ask-acts'); acts.textContent = '';
+  for (const a of askSt.scope === 'doc' ? A.ACTIONS.filter((x) => x.id === 'sum') : A.ACTIONS) {
+    const b = el('button', 'chip-act', askSt.scope === 'doc' ? 'Riassumi il PDF' : a.label); b.type = 'button'; b.dataset.act = a.id;
+    b.disabled = askSt.busy;
+    b.onclick = () => askRun({ action: a.id });
+    acts.append(b);
+  }
+  $('ask-input').placeholder = askSt.scope === 'sel' ? 'Chiedi qualcosa su questo passaggio…' : askSt.scope === 'page' ? 'Chiedi qualcosa su questa pagina…' : 'Domanda sul PDF…';
+  $('ask-send').disabled = askSt.busy;
+  paintAskOut();
+}
+let askRaf = 0;
+function paintAskOut() {
+  askRaf = 0;
+  const out = $('ask-out'), shown = askSt.busy || askSt.answer || askSt.error;
+  out.hidden = !shown;
+  if (!shown) return;
+  const l = askSt.last;
+  $('ask-info').textContent = askSt.info || (l ? [A.SOURCES[l.src].label, A.modelLabel(l.src, askSt.model), askSt.ctxInfo].filter(Boolean).join(' · ') + (askSt.stopped && !askSt.busy && askSt.answer ? ' · fermata' : '') : '');
+  const nearEnd = askAns.scrollHeight - askAns.scrollTop - askAns.clientHeight < 40;
+  askAns.textContent = '';
+  if (askSt.answer) askAns.append(A.renderMd(askSt.answer));
+  if (askSt.busy) {
+    if (!askSt.answer) askAns.append(el('p', 'ask-wait', askSt.thinking ? 'Sta ragionando…' : 'Chiedo a ' + A.SOURCES[askSt.last ? askSt.last.src : askSt.src].label + '…'));
+    let tgt = askAns.lastElementChild; // il cursore lampeggia in fondo al testo che sta arrivando
+    if (tgt && (tgt.tagName === 'UL' || tgt.tagName === 'OL')) tgt = tgt.lastElementChild;
+    if (!tgt || tgt.tagName === 'PRE' || tgt.tagName === 'HR') tgt = askAns;
+    tgt.append(el('i', 'caret'));
+  }
+  if (askSt.error) { const e = el('div', 'ask-err'); e.append(icon('alert'), el('span', '', askSt.error)); askAns.append(e); }
+  if (nearEnd || askSt.busy) askAns.scrollTop = askAns.scrollHeight;
+  const has = !!askSt.answer && !askSt.busy;
+  const canSave = has && askSt.last && askSt.last.scope === 'sel' && !!askSt.sel;
+  $('ask-save').hidden = !(askSt.last && askSt.last.scope === 'sel');
+  $('ask-save').disabled = !canSave || !!askSt.saved;
+  $('ask-save').querySelector('span').textContent = askSt.saved ? 'Salvato come commento ✓' : 'Salva come commento';
+  $('ask-copy').disabled = !has;
+  const r = $('ask-retry');
+  r.textContent = ''; r.append(icon(askSt.busy ? 'stop' : 'retry'), el('span', '', askSt.busy ? 'Ferma' : 'Riprova'));
+  r.disabled = !askSt.busy && !askSt.last;
+}
+const askLater = () => { if (!askRaf) askRaf = requestAnimationFrame(paintAskOut); };
+// tastiera dell'iPad aperta: il pannello sale sopra la tastiera
+function placeAsk() {
+  if (askEl.hidden) return;
+  const vv = window.visualViewport;
+  const kb = vv ? Math.max(0, innerHeight - vv.height - vv.offsetTop) : 0;
+  askEl.style.setProperty('--kb', kb + 'px');
+  askEl.style.setProperty('--vh', (vv ? vv.height : innerHeight) + 'px');
+}
+if (window.visualViewport) { visualViewport.addEventListener('resize', placeAsk); visualViewport.addEventListener('scroll', placeAsk); }
+function growAsk() { const t = $('ask-input'); t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight + 2) + 'px'; t.style.overflowY = t.scrollHeight > 120 ? 'auto' : 'hidden'; }
+// scorrendo il PDF col pannello aperto, "Pagina N" segue la pagina che si sta leggendo
+function paintAskPage() {
+  if (askEl.hidden || askSt.busy || !aiReady()) return;
+  const b = askEl.querySelector('.ask-scope [data-scope="page"]'), cur = curIndex() + 1;
+  b.textContent = 'Pagina ' + cur;
+  if (askSt.scope === 'page') $('ask-quote').textContent = 'Il testo della pagina ' + cur + (nb.pages.length > 1 ? ' di ' + nb.pages.length : '');
+}
+
+// il testo da mandare: selezione (con la sua pagina come contesto), pagina corrente, o i passaggi utili del PDF
+async function askContext(scope, what, src) {
+  const touched = new Set(), title = nb.node.name;
+  try {
+    if (scope === 'sel') {
+      const s = askSt.sel;
+      const pageTextS = await aiPageText(s.p.rec, touched).catch(() => '');
+      return { ctx: { title, scope, quote: s.text, page: s.page, pageText: pageTextS }, info: 'Selezione · pagina ' + s.page };
+    }
+    if (scope === 'page') {
+      const i = Math.max(0, curIndex()), p = nb.pages[i];
+      const text = await aiPageText(p.rec, touched);
+      if (!text.trim()) return { error: p.rec.type === 'pdf' ? 'Su questa pagina non c’è testo da inviare: è una scansione (una foto) o è vuota.' : 'Questa pagina non ha testo scritto con la tastiera (la scrittura a mano non si può inviare).' };
+      return { ctx: { title, scope, page: i + 1, pageText: text }, info: 'Pagina ' + (i + 1) };
+    }
+    const list = [], n = nb.pages.length;
+    for (let i = 0; i < n; i++) {
+      let t = '';
+      try { t = await aiPageText(nb.pages[i].rec, touched); } catch {}
+      list.push({ n: i + 1, text: t });
+      if (i % 20 === 19 && i < n - 1) { askSt.info = 'Leggo il PDF… pagina ' + (i + 1) + ' di ' + n; askLater(); await new Promise((r) => setTimeout(r, 0)); if (askSt.stopped) return null; }
+    }
+    const pick = A.pickPages(list, what.question || '', { budget: A.SOURCES[src].budget, current: curIndex() + 1 });
+    if (!pick.pages.length) return { error: 'Nel PDF non c’è testo da inviare: è una scansione (foto delle pagine).' };
+    return { ctx: { title, scope, docText: pick.text, docNote: pick.note }, info: pick.all ? 'Tutto il PDF (' + plural(pick.pages.length, 'pagina', 'pagine') + ' con testo)' : 'Ho incluso ' + A.pagesLabel(pick.pages, pick.total), pick };
+  } finally { persistTexts(touched); }
+}
+async function askRun(what) {
+  if (askSt.busy) return;
+  if (!aiReady()) { paintAsk(); return; }
+  if (what.question !== undefined && !what.question.trim()) { $('ask-input').focus(); return; }
+  if (!aiCfg.privacy) {
+    const ok = await modal({ title: 'Prima di inviare', text: PRIVACY, options: [{ label: 'Ho capito, invia', value: 'ok', accent: true }] });
+    if (!ok) return;
+    aiCfg.privacy = 1; saveAi();
+  }
+  const src = askSt.src, model = aiCfg.model[src] || '';
+  askSt.last = { what, scope: askSt.scope, src, model };
+  askSt.busy = true; askSt.stopped = false; askSt.answer = ''; askSt.error = ''; askSt.saved = null; askSt.thinking = false;
+  askSt.info = 'Preparo il testo…'; askSt.ctxInfo = ''; askSt.model = model;
+  paintAsk();
+  const c = await askContext(askSt.scope, what, src);
+  if (!c || askSt.stopped) { askDone(null); return; }
+  if (c.error) { askDone(c.error); return; }
+  askSt.info = ''; askSt.ctxInfo = c.info;
+  askSt.pick = c.pick || null;
+  const body = { provider: src, model, system: A.SYSTEM, messages: [{ role: 'user', content: A.buildMessage(c.ctx, what) }] };
+  askSt.sent = body; // per i test
+  paintAskOut();
+  await askStream(body);
+}
+async function askStream(body) {
+  const ctrl = new AbortController();
+  askSt.ctrl = ctrl;
+  let timedOut = false;
+  const wait = setTimeout(() => { timedOut = true; ctrl.abort(); }, 30000); // il Mac non risponde nemmeno
+  let res;
+  try {
+    res = await fetch(aiCfg.url + '/ask', { method: 'POST', body: JSON.stringify(body), signal: ctrl.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + aiCfg.token } });
+  } catch (e) { clearTimeout(wait); askDone(askSt.stopped && !timedOut ? null : A.MSG_DOWN); return; }
+  clearTimeout(wait);
+  if (!res.ok) { let j = null; try { j = await res.json(); } catch {} askDone(A.errorText(res.status, j)); return; }
+  if (!res.body || !res.body.getReader) { askDone('Questo browser non sa leggere le risposte a pezzi: aggiorna iPadOS.'); return; }
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let err = null, done = false, idle = 0;
+  const arm = () => { clearTimeout(idle); idle = setTimeout(() => { timedOut = true; ctrl.abort(); }, 100000); }; // il bridge manda un "ping" ogni 15 s
+  const feed = A.sseReader((name, d) => {
+    if (name === 'text') { askSt.answer += d.t || ''; askSt.thinking = false; askLater(); }
+    else if (name === 'thinking') { if (!askSt.thinking && !askSt.answer) { askSt.thinking = true; askLater(); } }
+    else if (name === 'meta') { if (d.model) { askSt.model = d.model; askLater(); } }
+    else if (name === 'error') err = d.message || 'errore sul Mac Studio';
+    else if (name === 'done') done = true;
+  });
+  arm();
+  try {
+    for (;;) {
+      const { value, done: end } = await reader.read();
+      if (end) break;
+      arm(); feed(dec.decode(value, { stream: true }));
+      if (err || done) break;
+    }
+  } catch (e) { if (!askSt.stopped || timedOut) err = timedOut ? 'Il Mac Studio ha smesso di rispondere. Riprova.' : A.MSG_DOWN; }
+  clearTimeout(idle);
+  try { reader.cancel().catch(() => {}); } catch {}
+  if (!err && !done && !askSt.stopped) err = 'La risposta si è interrotta a metà. Riprova.';
+  askDone(err);
+}
+function askDone(err) {
+  askSt.busy = false; askSt.ctrl = null; askSt.thinking = false;
+  if (err) { askSt.error = err; askSt.info = ''; }
+  paintAsk();
+}
+function askStop() { askSt.stopped = true; if (askSt.ctrl) askSt.ctrl.abort(); }
+askEl.querySelectorAll('.ask-src button').forEach((b) => {
+  b.onclick = () => { if (askSt.busy) return; askSt.src = b.dataset.src; aiCfg.src = askSt.src; saveAi(); paintAsk(); };
+});
+askEl.querySelectorAll('.ask-scope button').forEach((b) => {
+  b.onclick = () => { if (askSt.busy) return; askSt.scope = b.dataset.scope; askSt.answer = ''; askSt.error = ''; askSt.last = null; paintAsk(); };
+});
+$('ask-form').onsubmit = (e) => { e.preventDefault(); const q = $('ask-input').value; askRun({ question: q }); };
+$('ask-input').addEventListener('input', growAsk);
+$('ask-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('ask-form').requestSubmit ? $('ask-form').requestSubmit() : $('ask-form').onsubmit(e); } });
+$('ask-input').addEventListener('focus', () => setTimeout(placeAsk, 350));
+$('ask-close').onclick = closeAsk;
+askEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeAsk(); } });
+$('ask-retry').onclick = () => { if (askSt.busy) { askStop(); return; } const l = askSt.last; if (!l) return; askSt.scope = l.scope; askRun(l.what); };
+$('ask-copy').onclick = () => { if (askSt.answer) copyText(askSt.answer.trim(), 'Risposta copiata'); };
+$('ask-save').onclick = () => {
+  const s = askSt.sel, l = askSt.last;
+  if (!s || !l || !askSt.answer || askSt.saved) return;
+  if (!nb.pages.includes(s.p)) { toast('La pagina è stata ricaricata: seleziona di nuovo il testo'); return; }
+  const a = newAnn(s.part, A.commentText(l.what, l.src, askSt.model, askSt.answer));
+  if (s.rects && s.rects.length) a.r = s.rects;
+  commitAnns([{ p: s.p, id: a.id, after: a }]);
+  askSt.saved = a.id; paintAskOut();
+  toast('Risposta salvata come commento sulla frase (pagina ' + s.page + ')', 3000);
+};
+const copyCmd = () => copyText(A.INSTALL_CMD, 'Comando copiato: incollalo nel Terminale del Mac Studio');
+$('ask-setup-cmd').onclick = copyCmd;
+$('ask-setup-open').onclick = () => { closeAsk(); openSettings(); };
+$('btn-ask').onclick = () => { if (palmTap()) return; if (!askEl.hidden && !askSt.busy && !askSt.sel) { closeAsk(); return; } openAsk(false); };
+
+// ---------- Impostazioni › Assistente ----------
+function aiStatusLine(h) {
+  const ul = $('ai-status'); ul.textContent = '';
+  ul.hidden = !h;
+  if (!h) return;
+  for (const k of ['qwen', 'claude']) {
+    const x = h[k] || {}, li = el('li');
+    li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', A.SOURCES[k].label + (x.ok ? (k === 'qwen' ? ' · ' + x.default : ' · abbonamento' + (x.plan ? ' ' + x.plan : '')) : ' · ' + (x.error || 'non disponibile'))));
+    ul.append(li);
+  }
+}
+function paintAiModels() {
+  const src = $('ai-src').value, sel = $('ai-model'), h = aiCfg.health && aiCfg.health[src];
+  sel.textContent = '';
+  const opts = src === 'claude' ? ((h && h.models) || ['sonnet', 'opus']).map((m) => [m, A.CLAUDE_MODELS[m] || m])
+    : [['', 'Quello predefinito' + (h && h.default ? ' (' + h.default + ')' : '')], ...((h && h.models) || []).map((m) => [m, m])];
+  for (const [v, t] of opts) { const o = el('option', '', t); o.value = v; sel.append(o); }
+  const want = aiCfg.model[src] || (src === 'claude' ? (h && h.default) || 'sonnet' : '');
+  sel.value = opts.some(([v]) => v === want) ? want : opts[0][0];
+}
+function paintAiChip(state, text) { $('ai-chip').dataset.state = state; $('ai-state').textContent = text; }
+function renderAi() {
+  $('ai-url').value = aiCfg.url || ''; $('ai-token').value = aiCfg.token || '';
+  $('ai-err').hidden = true;
+  $('ai-src').value = askSt.src;
+  $('btn-ai-forget').hidden = !aiReady();
+  $('ai-cmd').textContent = A.INSTALL_CMD;
+  const h = aiCfg.health;
+  if (!aiReady()) paintAiChip('off', 'Mac Studio non collegato');
+  else if (h && (h.qwen.ok || h.claude.ok)) paintAiChip('idle', 'Collegato al Mac Studio');
+  else paintAiChip('off', 'Indirizzo e token salvati: tocca Prova connessione');
+  aiStatusLine(aiReady() ? h : null);
+  paintAiModels();
+}
+function aiErr(msg) { const e = $('ai-err'); e.textContent = msg || ''; e.hidden = !msg; }
+// incollando "https://…ts.net#token=…" nel campo indirizzo, il token va al suo posto
+$('ai-url').addEventListener('input', () => {
+  const r = A.parseUrl($('ai-url').value);
+  if (r.ok && r.token) { $('ai-url').value = r.url; $('ai-token').value = r.token; aiErr(''); }
+});
+function readAiFields() {
+  const u = A.parseUrl($('ai-url').value);
+  if (!u.ok) { aiErr(u.error); return null; }
+  const t = A.checkToken(u.token || $('ai-token').value);
+  if (!t.ok) { aiErr(t.error); return null; }
+  $('ai-url').value = u.url; $('ai-token').value = t.token;
+  aiErr('');
+  return { url: u.url, token: t.token };
+}
+async function testAi() {
+  const f = readAiFields();
+  if (!f) return;
+  if (f.url !== aiCfg.url || f.token !== aiCfg.token) aiCfg.health = null;
+  aiCfg.url = f.url; aiCfg.token = f.token; saveAi();
+  $('btn-ai-forget').hidden = false;
+  const btn = $('btn-ai-test'); btn.disabled = true;
+  paintAiChip('syncing', 'Provo il collegamento…');
+  const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const r = await fetch(f.url + '/health?fresh=1', { headers: { Authorization: 'Bearer ' + f.token }, signal: ctrl.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' });
+    let j = null; try { j = await r.json(); } catch {}
+    if (!r.ok || !j || !j.qwen) throw Object.assign(new Error(A.errorText(r.status, j)), { said: true });
+    aiCfg.health = { at: Date.now(), qwen: j.qwen, claude: j.claude };
+    // la sorgente scelta non c'è sul Mac ma l'altra sì: passo all'altra
+    if (!j[askSt.src].ok && j[askSt.src === 'qwen' ? 'claude' : 'qwen'].ok) { askSt.src = askSt.src === 'qwen' ? 'claude' : 'qwen'; aiCfg.src = askSt.src; }
+    saveAi();
+    renderAi();
+    paintAiChip(j.qwen.ok || j.claude.ok ? 'idle' : 'error', j.qwen.ok && j.claude.ok ? 'Collegato: Qwen e Claude pronti' : j.qwen.ok || j.claude.ok ? 'Collegato (solo ' + (j.qwen.ok ? 'Qwen' : 'Claude') + ')' : 'Collegato, ma né Qwen né Claude sono pronti');
+  } catch (e) {
+    paintAiChip('error', e.said ? e.message : A.MSG_DOWN);
+    aiStatusLine(null);
+  } finally { clearTimeout(t); btn.disabled = false; if (!askEl.hidden) paintAsk(); }
+}
+$('btn-ai-test').onclick = testAi;
+$('ai-token').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); testAi(); } });
+$('btn-ai-forget').onclick = async () => {
+  $('settings').close();
+  if (!(await confirmDlg('Scollegare il Mac Studio?', 'Tolgo indirizzo e token da questo dispositivo. Sul Mac Studio non cambia niente.', 'Scollega'))) { openSettings(); return; }
+  delete aiCfg.url; delete aiCfg.token; aiCfg.health = null; saveAi();
+  if (!askEl.hidden) paintAsk();
+  openSettings();
+};
+$('ai-src').onchange = () => { askSt.src = $('ai-src').value; aiCfg.src = askSt.src; saveAi(); paintAiModels(); if (!askEl.hidden) paintAsk(); };
+$('ai-model').onchange = () => { aiCfg.model[$('ai-src').value] = $('ai-model').value; saveAi(); };
+$('btn-ai-cmd').onclick = copyCmd;
 
 async function movePage(i, d) {
   await flush();
@@ -2240,7 +2575,7 @@ popBack.addEventListener('pointerdown', (e) => { e.preventDefault(); closePop();
 paintColorChip();
 
 async function closeNotebook() {
-  closePop(); endSel();
+  closePop(); endSel(); closeAsk();
   await flush();
   saveLastPage();
   D.setMeta('open', null).catch(() => {});
@@ -2327,7 +2662,7 @@ function renderSync() {
 }
 Sync.onStatus(renderSync);
 $('app-ver').textContent = APP_VERSION;
-const openSettings = () => { renderSync(); $('settings').showModal(); };
+const openSettings = () => { renderSync(); renderAi(); $('settings').showModal(); };
 $('btn-settings').onclick = openSettings;
 $('btn-status').onclick = openSettings;
 $('set-close').onclick = () => $('settings').close();
@@ -2336,7 +2671,7 @@ $('btn-onedrive').onclick = () => Sync.signIn();
 $('btn-signout').onclick = async () => { $('settings').close(); if (await confirmDlg('Scollegare OneDrive?', 'I quaderni restano su questo dispositivo e su OneDrive.', 'Scollega')) Sync.signOut(); };
 Sync.onData(function applyRemote() {
   if (!library.hidden) { refreshLibrary(); return; }
-  if (nb.drawing || pending.size || selSnap || $('cdlg').open || document.activeElement?.closest?.('.txt')) { setTimeout(applyRemote, 1500); return; }
+  if (nb.drawing || pending.size || selSnap || $('cdlg').open || (!askEl.hidden && askSt.sel) || document.activeElement?.closest?.('.txt')) { setTimeout(applyRemote, 1500); return; }
   (async () => {
     const node = await D.get('nodes', nb.node.id);
     if (!node || node.deleted) { closeNotebook(); return; }
@@ -2389,4 +2724,4 @@ async function resumeLast() {
 // Appigli per i test automatici
 window.__penna = { D, Sync, S, nb, lib, openNotebook, refreshLibrary, exportBytes, flush, buildPages, setTool, runSearch, pdfjs, thumbUrl, version: APP_VERSION,
   goToPage, curIndex, saveNow, saveSt, copyNotebook, runFind, closeNotebook, want, stats: () => ({ rendering, want: want.size, drawn: nb.pages.filter((p) => p.bg.width > 0).length, textLayers: tlPages.size }),
-  N, readSelection, allMarkdown, tlPages, undo, redo, copyText };
+  N, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, test: testAi } };

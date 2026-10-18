@@ -63,6 +63,10 @@
 <symbol id="i-select" viewBox="0 0 24 24"><path d="M8.5 4.5c1.9 0 3.5.8 3.5 2.4v10.2c0 1.6-1.6 2.4-3.5 2.4M15.5 4.5c-1.9 0-3.5.8-3.5 2.4M15.5 19.5c-1.9 0-3.5-.8-3.5-2.4M9.6 12h4.8"/></symbol>
 <symbol id="i-comment" viewBox="0 0 24 24"><path d="M6.5 4.8h11a2.5 2.5 0 0 1 2.5 2.5v7.2a2.5 2.5 0 0 1-2.5 2.5h-6.3l-4.4 3.3v-3.3h-.3A2.5 2.5 0 0 1 4 14.5V7.3a2.5 2.5 0 0 1 2.5-2.5z"/><path d="M8.3 9.3h7.4M8.3 12.3h4.6"/></symbol>
 <symbol id="i-copy-note" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2M11.5 12.3h5M11.5 15.3h3"/></symbol>
+<symbol id="i-spark" viewBox="0 0 24 24"><path d="M11 3.8c.7 4.1 2.6 6 6.7 6.7-4.1.7-6 2.6-6.7 6.7-.7-4.1-2.6-6-6.7-6.7 4.1-.7 6-2.6 6.7-6.7z"/><path d="M18.2 15.2c.3 1.7 1 2.4 2.7 2.7-1.7.3-2.4 1-2.7 2.7-.3-1.7-1-2.4-2.7-2.7 1.7-.3 2.4-1 2.7-2.7z"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5.5M6.5 11 12 5.5l5.5 5.5"/></symbol>
+<symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.6"/></symbol>
+<symbol id="i-retry" viewBox="0 0 24 24"><path d="M19.2 12a7.2 7.2 0 1 1-2.1-5.1"/><path d="M19.5 4.5v4h-4"/></symbol>
 <symbol id="i-md" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2.8"/><path d="M6.5 14.8V9.2l2.4 3 2.4-3v5.6M15.8 9.2v5.6M13.7 12.8l2.1 2.1 2.1-2.1"/></symbol>
 </defs></svg>
 
@@ -124,6 +128,7 @@
       <button id="btn-next" class="ib" type="button" aria-label="Pagina successiva" title="Pagina successiva"><svg class="ic" aria-hidden="true"><use href="#i-down"/></svg></button>
       <button id="btn-bm" class="ib" type="button" aria-label="Segnalibro su questa pagina" title="Segnalibro su questa pagina"><svg class="ic" aria-hidden="true"><use href="#i-bookmark"/></svg></button>
       <button id="btn-notes" class="ib" type="button" aria-label="Commenti ed evidenziazioni" title="Commenti ed evidenziazioni"><svg class="ic" aria-hidden="true"><use href="#i-comment"/></svg></button>
+      <button id="btn-ask" class="ib" type="button" aria-label="Chiedi sul PDF" title="Chiedi (spiega, riassumi, domande sul PDF)"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg></button>
     </div>
    </div>
     <div id="text-tools" class="pillbar sub" hidden>
@@ -203,6 +208,7 @@
   <button type="button" data-act="hl"><i class="hdot"></i><span>Evidenzia</span></button>
   <button type="button" data-act="note"><svg class="ic" aria-hidden="true"><use href="#i-comment"/></svg><span>Commenta</span></button>
   <button type="button" data-act="copynote"><svg class="ic" aria-hidden="true"><use href="#i-copy-note"/></svg><span class="long">Copia con commento</span><span class="short">Copia + nota</span></button>
+  <button type="button" data-act="ask" class="ask-act"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg><span>Chiedi</span></button>
 </div>
 
 <!-- Commento su una frase -->
@@ -242,10 +248,81 @@
     </div>
   </div>
   <div class="group">
+    <div class="group-title">Assistente</div>
+    <div id="ai-box" class="set-box">
+      <div class="row-status"><span class="sync-chip" id="ai-chip" data-state="off"><i class="sync-dot"></i><span id="ai-state">Mac Studio non collegato</span></span></div>
+      <p class="set-help">Spiegazioni, riassunti e domande sul testo dei PDF, dal tuo Mac Studio: <b>Qwen</b> (gratis, gira sul Mac) o <b>Claude</b> (con il tuo abbonamento).</p>
+      <label class="fld"><span>Indirizzo del Mac Studio</span><input id="ai-url" type="url" inputmode="url" placeholder="https://nome.xxxx.ts.net" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next"></label>
+      <label class="fld"><span>Token</span><input id="ai-token" type="password" placeholder="Incolla il token" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done"></label>
+      <p id="ai-err" class="fld-err" role="alert" hidden></p>
+      <div class="row-btns">
+        <button id="btn-ai-test" class="pill accent" type="button"><svg class="ic" aria-hidden="true"><use href="#i-sync"/></svg><span>Prova connessione</span></button>
+        <button id="btn-ai-forget" class="pill" type="button" hidden><svg class="ic" aria-hidden="true"><use href="#i-logout"/></svg><span>Scollega</span></button>
+      </div>
+      <ul id="ai-status" class="ai-status" hidden></ul>
+      <div class="fld-row">
+        <label class="fld"><span>Chi risponde di solito</span><select id="ai-src"><option value="qwen">Studio · Qwen (gratis)</option><option value="claude">Studio · Claude (abbonamento)</option></select></label>
+        <label class="fld"><span>Modello</span><select id="ai-model"></select></label>
+      </div>
+      <details class="ai-how">
+        <summary>Come collegare il Mac Studio</summary>
+        <ol>
+          <li>Sul Mac Studio apri il <b>Terminale</b>, incolla questa riga e premi Invio:<code id="ai-cmd"></code><button id="btn-ai-cmd" class="pill small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Copia il comando</span></button></li>
+          <li>Alla fine compaiono <b>Indirizzo</b> e <b>Token</b>: incollali qui sopra.</li>
+          <li>Sull’iPad tieni accesa l’app <b>Tailscale</b>, poi tocca <b>Prova connessione</b>.</li>
+        </ol>
+      </details>
+    </div>
+  </div>
+  <div class="group">
     <div class="group-title">App</div>
     <p class="about">PDF Penna <b id="app-ver"></b> · i quaderni sono salvati su questo dispositivo<span id="sync-about"></span>.</p>
   </div>
 </dialog>
+
+<!-- Chiedi: pannello dal basso (le risposte arrivano dal Mac Studio) -->
+<section id="ask" hidden role="dialog" aria-labelledby="ask-title">
+  <div class="ask-head">
+    <h3 id="ask-title"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg><span>Chiedi</span></h3>
+    <div class="ask-src" role="radiogroup" aria-label="Chi risponde">
+      <button type="button" role="radio" data-src="qwen"><b>Qwen</b><small>gratis</small></button>
+      <button type="button" role="radio" data-src="claude"><b>Claude</b><small>abbonamento</small></button>
+    </div>
+    <button id="ask-close" class="ib soft" type="button" aria-label="Chiudi"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></button>
+  </div>
+  <div id="ask-setup" hidden>
+    <p><b>Collega prima il tuo Mac Studio</b> (una volta sola):</p>
+    <ol>
+      <li>Sul Mac Studio apri il <b>Terminale</b>, incolla il comando e premi Invio.</li>
+      <li>Alla fine compaiono <b>Indirizzo</b> e <b>Token</b>: incollali in <b>Impostazioni › Assistente</b>.</li>
+      <li>Sull’iPad accendi l’app <b>Tailscale</b>.</li>
+    </ol>
+    <div class="row-btns"><button id="ask-setup-cmd" class="pill" type="button"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Copia il comando</span></button><button id="ask-setup-open" class="pill accent" type="button"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg><span>Apri Impostazioni</span></button></div>
+    <p class="ask-fine">Il resto dell’app funziona anche senza.</p>
+  </div>
+  <div id="ask-main">
+    <div class="ask-scope" role="tablist" aria-label="Su cosa">
+      <button type="button" role="tab" data-scope="sel">Selezione</button>
+      <button type="button" role="tab" data-scope="page">Pagina</button>
+      <button type="button" role="tab" data-scope="doc">Tutto il PDF</button>
+    </div>
+    <blockquote id="ask-quote"></blockquote>
+    <div class="ask-acts" id="ask-acts"></div>
+    <form id="ask-form" autocomplete="off">
+      <textarea id="ask-input" rows="1" placeholder="Fai una domanda…" enterkeyhint="send"></textarea>
+      <button id="ask-send" class="ib" type="submit" aria-label="Invia la domanda" title="Invia"><svg class="ic" aria-hidden="true"><use href="#i-send"/></svg></button>
+    </form>
+    <div id="ask-out" hidden>
+      <div id="ask-info" class="ask-info"></div>
+      <div id="ask-answer" class="md" aria-live="polite"></div>
+      <div class="ask-btns">
+        <button id="ask-save" class="pill accent small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-comment"/></svg><span>Salva come commento</span></button>
+        <button id="ask-copy" class="pill small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Copia</span></button>
+        <button id="ask-retry" class="pill small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-retry"/></svg><span>Riprova</span></button>
+      </div>
+    </div>
+  </div>
+</section>
 
 <div id="toast" hidden></div>
 <div id="update-bar" hidden><span>È pronta una nuova versione</span><button id="btn-update" class="pill small accent" type="button">Aggiorna</button></div>
