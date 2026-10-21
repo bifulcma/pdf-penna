@@ -5,7 +5,7 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v10';
+const APP_VERSION = 'v11';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -1685,6 +1685,7 @@ function closeAsk() {
   if (askEl.contains(document.activeElement)) document.activeElement.blur();
 }
 function paintAsk() {
+  if (askSt.scope === 'sel' && !askSt.sel) askSt.scope = 'page'; // selezione persa: ripiega sulla pagina
   const ready = aiReady();
   $('ask-setup').hidden = ready; $('ask-main').hidden = !ready;
   askEl.classList.toggle('setup', !ready);
@@ -1919,6 +1920,7 @@ function paintAskPage() {
 async function askContext(scope, what, src) {
   const touched = new Set(), title = nb.node.name;
   try {
+    if (scope === 'sel' && !askSt.sel) scope = 'page';
     if (scope === 'sel') {
       const s = askSt.sel;
       const pageTextS = await aiPageText(s.p.rec, touched).catch(() => '');
