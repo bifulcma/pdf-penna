@@ -1937,10 +1937,23 @@ async function askContext(scope, what, src) {
       list.push({ n: i + 1, text: t });
       if (i % 20 === 19 && i < n - 1) { askSt.info = 'Leggo il PDF… pagina ' + (i + 1) + ' di ' + n; askLater(); await new Promise((r) => setTimeout(r, 0)); if (askSt.stopped) return null; }
     }
-    const pick = A.pickPages(list, what.question || '', { budget: A.SOURCES[src].budget, current: curIndex() + 1 });
+    if (src === 'qwen') await refreshQwenCtx(); // "Tutto il PDF" con Qwen: tutto il libro, se entra nel suo contesto
+    const pick = A.pickPages(list, what.question || '', { budget: A.docBudget(src, aiCfg.health), current: curIndex() + 1 });
     if (!pick.pages.length) return { error: 'Nel PDF non c’è testo da inviare: è una scansione (foto delle pagine).' };
     return { ctx: { title, scope, docText: pick.text, docNote: pick.note }, info: pick.all ? 'Tutto il PDF (' + plural(pick.pages.length, 'pagina', 'pagine') + ' con testo)' : 'Ho incluso ' + A.pagesLabel(pick.pages, pick.total), pick };
   } finally { persistTexts(touched); }
+}
+// Contesto di Qwen (num_ctx) dal bridge, in silenzio: serve a decidere quanto PDF mandare. Salvato con la salute del
+// collegamento; si rilegge se manca (bridge aggiornato dopo l'ultima prova) o ha più di 6 ore. Errori ignorati.
+async function refreshQwenCtx() {
+  const h = aiCfg.health;
+  if (!aiCfg.url || !aiCfg.token || !h || !h.qwen || (h.qwen.num_ctx !== undefined && Date.now() - (h.at || 0) < 6 * 3600e3)) return;
+  const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const r = await fetch(aiCfg.url + '/health', { headers: { Authorization: 'Bearer ' + aiCfg.token }, signal: ctrl.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' });
+    const j = r.ok ? await r.json() : null;
+    if (j && j.qwen) { h.qwen = j.qwen; h.at = Date.now(); saveAi(); }
+  } catch {} finally { clearTimeout(t); }
 }
 async function askRun(what, opts = {}) {
   if (askSt.busy) return;

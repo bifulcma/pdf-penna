@@ -42,6 +42,12 @@ ok('commento salvato: azione — sorgente, poi la risposta', A.commentText({ act
 // ---------- scelta delle pagine ----------
 ok('parole chiave: niente parole vuote, accenti tolti, radici', JSON.stringify(A.keywords('Cosa dice il PDF sulla clausola rescissoria e sulla libertà?')) === JSON.stringify(['clauso', 'rescissor', 'liber']), A.keywords('Cosa dice il PDF sulla clausola rescissoria e sulla libertà?'));
 const book = Array.from({ length: 300 }, (_, i) => ({ n: i + 1, text: 'Pagina ' + (i + 1) + '. ' + 'Riga del testo di prova con parole comuni per riempire. '.repeat(18) + (i + 1 === 150 ? 'Clausola rescissoria: il contratto si scioglie se.' : '') + (i + 1 === 40 ? 'Le clausole del contratto sono tre.' : '') }));
+// ---------- budget del testo: contesto dichiarato dal bridge ----------
+ok('budget Qwen fisso senza num_ctx (bridge vecchio)', A.docBudget('qwen', { qwen: { ok: true } }) === 24000 && A.docBudget('qwen', null) === 24000);
+ok('budget Qwen con 256k: libro intero', A.docBudget('qwen', { qwen: { num_ctx: 262144 } }) === (262144 - 16000) * 3);
+ok('budget Qwen con 16k: resta fisso', A.docBudget('qwen', { qwen: { num_ctx: 16384 } }) === 24000);
+ok('budget Claude invariato', A.docBudget('claude', { qwen: { num_ctx: 262144 }, claude: {} }) === 60000);
+ok('num_ctx non numerico ignorato', A.docBudget('qwen', { qwen: { num_ctx: '262144' } }) === 24000);
 const pk = A.pickPages(book, 'Cosa dice la clausola rescissoria?', { budget: 24000, current: 1 });
 ok(`libro da 300 pagine: scelte ${pk.pages.join(', ')} (la pagina giusta e le vicine), ${pk.chars} caratteri entro 24.000`, pk.pages.includes(150) && pk.pages.includes(149) && pk.pages.includes(151) && pk.chars <= 24000 && !pk.all && pk.pages.length < 30, pk.pages);
 ok('la pagina con entrambe le parole viene prima di quella con una sola', pk.pages.indexOf(150) >= 0 && pk.text.indexOf('[Pagina 150]') >= 0 && (!pk.pages.includes(40) || pk.hits >= 2));

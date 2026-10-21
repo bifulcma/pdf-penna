@@ -1393,7 +1393,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         has_key = bool(tavily_key())  # si dice solo se c'è, mai la chiave
         self.send_json(200, {
             'ok': True, 'version': VERSION,
-            'qwen': qwen_status(),
+            'qwen': dict(qwen_status(), num_ctx=CFG['qwen_num_ctx']),  # l'app sceglie quanto testo mandare
             'claude': {'ok': info['ok'], 'models': CFG['claude_models'], 'default': CFG['claude_default'], 'plan': info['plan'], 'error': info['error']},
             'web_claude': {'ok': info['ok'] and info['web'], 'error': '' if info['ok'] and info['web'] else info['error'] or MSG_OLD_CLAUDE_WEB},
             'web_qwen': {'ok': has_key, 'key': 'ok' if has_key else 'manca', 'error': '' if has_key else 'manca la chiave Tavily sul Mac Studio'},

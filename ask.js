@@ -8,6 +8,13 @@ export const SOURCES = {
   qwen: { label: 'Qwen', long: 'Studio · Qwen (gratis)', budget: 24000 },
   claude: { label: 'Claude', long: 'Studio · Claude (abbonamento)', budget: 60000 },
 };
+// Quanto testo del PDF mandare. Se il bridge dice quanto contesto ha Qwen (num_ctx, in token) e supera i 16k,
+// si manda fino a ~3 caratteri per token, lasciando 16k token per istruzioni, domanda e risposta: un libro intero
+// entra in 256k. Con un bridge che non lo dice resta il budget fisso.
+export function docBudget(src, health) {
+  const base = SOURCES[src].budget, n = health && health[src] && health[src].num_ctx;
+  return src === 'qwen' && Number.isInteger(n) && n > 16384 ? Math.max(base, (n - 16000) * 3) : base;
+}
 export const CLAUDE_MODELS = { sonnet: 'Sonnet (veloce)', opus: 'Opus (più accurato)', haiku: 'Haiku (rapidissimo)', fable: 'Fable' };
 export const modelLabel = (src, m) => (src === 'claude' ? (CLAUDE_MODELS[m] || m || 'Sonnet').replace(/ \(.*\)$/, '') : m || 'modello predefinito');
 
