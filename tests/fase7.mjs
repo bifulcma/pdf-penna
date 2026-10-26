@@ -151,7 +151,7 @@ try {
   await shot(P, 'ipad-selezione-menu-chiedi');
   await tap(P, '#selmenu button[data-act="ask"]');
   await P.waitFor(`!document.getElementById('ask').hidden && !document.getElementById('ask-main').hidden`, 3000, 'pannello');
-  ok('Chiedi → pannello con la frase, su «Selezione · p. 1», azioni rapide, sorgente Qwen', await q(`document.getElementById('ask-quote').textContent==='«La libertà è il dono più grande»' && document.querySelector('.ask-scope .on').dataset.scope==='sel' && document.querySelector('.ask-scope .on').textContent==='Selezione · p. 1' && [...document.querySelectorAll('#ask-acts button')].map(b=>b.textContent).join('|')==='Spiega|Riassumi|Traduci in italiano|Obiezioni' && document.querySelector('.ask-src .on').dataset.src==='qwen'`));
+  ok('Chiedi → pannello con la frase, su «Selezione · p. 1», azioni rapide, sorgente Qwen', await q(`document.getElementById('ask-quote').textContent==='«La libertà è il dono più grande»' && document.querySelector('.ask-scope .on').dataset.scope==='sel' && document.querySelector('.ask-scope .on').textContent==='Selezione · p. 1' && [...document.querySelectorAll('#ask-acts button')].map(b=>b.textContent).join('|')==='Spiega|Riassumi|Verifica|Obiezioni' && document.querySelector('.ask-src .on').dataset.src==='qwen'`));
   ok('aprire il pannello non manda niente', asks() === 0 && ol.st.requests.length === 0);
   ok('pannello: pulsanti >= 44px, menu della selezione chiuso', (await small(P)).length === 0 && await q(`document.getElementById('selmenu').hidden`), JSON.stringify(await small(P)));
   await tap(P, '#ask-acts button[data-act="explain"]');

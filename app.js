@@ -1967,7 +1967,7 @@ async function askRun(what, opts = {}) {
     aiCfg.privacy = 1; saveAi();
   }
   // opts.queries = ricerche corrette a mano ("Modifica ricerca"): si cerca sul web con quelle, così come sono
-  const src = askSt.src, model = aiCfg.model[src] || '', queries = opts.queries && opts.queries.length ? opts.queries : null, web = !!queries || !!aiCfg.web;
+  const src = askSt.src, model = aiCfg.model[src] || '', queries = opts.queries && opts.queries.length ? opts.queries : null, act = what.action ? A.actionById(what.action) : null, web = !!queries || !!aiCfg.web || !!(act && act.web && aiCfg.webPrivacy); // «Verifica» cerca sul web se l'hai già autorizzato una volta
   askSt.last = { what, scope: askSt.scope, src, model, web, queries };
   askSt.busy = true; askSt.stopped = false; askSt.answer = ''; askSt.error = ''; askSt.saved = null; askSt.thinking = false;
   askSt.found = []; askSt.numbered = false; askSt.searching = ''; askSt.webOld = false;

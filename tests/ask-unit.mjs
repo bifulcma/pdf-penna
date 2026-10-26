@@ -35,8 +35,8 @@ const pg = A.buildMessage({ title: 'Libro', scope: 'page', page: 7, pageText: 'T
 ok('Riassumi questa pagina', /Testo della pagina 7:/.test(pg) && /Riassumi questa pagina/.test(pg));
 const fq = A.buildMessage({ title: 'Libro', scope: 'doc', docText: '[Pagina 1]\nAbc', docNote: 'Passaggi (pagine 1 su 9):' }, { question: '  Chi è l’autore? ' });
 ok('Domanda sul PDF: passaggi + domanda', /Passaggi \(pagine 1 su 9\):/.test(fq) && /Domanda: Chi è l’autore\?\nRispondi basandoti sul testo/.test(fq));
-ok('le virgolette triple nel testo non chiudono il blocco', !/"""x"""/.test(A.buildMessage({ title: 't', scope: 'sel', quote: 'a """x""" b', page: 1 }, { action: 'tr' }).split('\n').slice(2, 5).join('')));
-ok('tutte le azioni hanno testo per selezione, pagina e PDF', A.ACTIONS.length === 4 && A.ACTIONS.every((a) => a.sel && a.page && a.doc) && A.ACTIONS.map((a) => a.label).join('|') === 'Spiega|Riassumi|Traduci in italiano|Obiezioni');
+ok('le virgolette triple nel testo non chiudono il blocco', !/"""x"""/.test(A.buildMessage({ title: 't', scope: 'sel', quote: 'a """x""" b', page: 1 }, { action: 'ver' }).split('\n').slice(2, 5).join('')));
+ok('tutte le azioni hanno testo per selezione, pagina e PDF', A.ACTIONS.length === 4 && A.ACTIONS.every((a) => a.sel && a.page && a.doc) && A.ACTIONS.map((a) => a.label).join('|') === 'Spiega|Riassumi|Verifica|Obiezioni');
 ok('commento salvato: azione — sorgente, poi la risposta', A.commentText({ action: 'explain' }, 'claude', 'sonnet', ' Risposta. ') === '✦ Spiega — Claude Sonnet\n\nRisposta.' && A.commentText({ question: 'Perché?' }, 'qwen', 'qwen3:14b', 'X') === '✦ Domanda: Perché? — Qwen\n\nX');
 
 // ---------- scelta delle pagine ----------
