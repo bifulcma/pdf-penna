@@ -1,11 +1,11 @@
 import * as D from './db.js';
 import * as Sync from './sync.js';
-import { buildNotebookPdf, LAYOUT, HL_ALPHA } from './pdfexport.js';
+import { buildNotebookPdf, LAYOUT, HL_ALPHA, STRIKE_Y } from './pdfexport.js';
 import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v11';
+const APP_VERSION = 'v13';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -268,11 +268,13 @@ function paintBlocks(ctx, blocks, W, H) {
     y += fs * LAYOUT.gap;
   }
 }
-// evidenziazioni del testo (per le miniature): stesso effetto "pennarello" dello schermo
+// evidenziazioni del testo (per le miniature): stesso effetto "pennarello" dello schermo; Barra e Modifica: linea rossa
 function paintAnns(ctx, anns, W, H) {
   if (!anns || !anns.length) return;
   ctx.save(); ctx.globalCompositeOperation = 'multiply';
-  for (const a of anns) { ctx.globalAlpha = a.a ?? HL_ALPHA; ctx.fillStyle = a.c; for (const r of a.r || []) ctx.fillRect(r.l * W, r.t * H, r.w * W, r.h * H); }
+  for (const a of anns) { if (N.isFix(a)) continue; ctx.globalAlpha = a.a ?? HL_ALPHA; ctx.fillStyle = a.c; for (const r of a.r || []) ctx.fillRect(r.l * W, r.t * H, r.w * W, r.h * H); }
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.fillStyle = N.STRIKE;
+  for (const a of anns) if (N.isFix(a)) for (const r of a.r || []) { const t = Math.max(1.5, r.h * H * 0.09); ctx.fillRect(r.l * W, Math.round((r.t + r.h * STRIKE_Y) * H - t / 2), r.w * W, t); }
   ctx.restore();
 }
 async function paintImages(ctx, images, W) {
@@ -524,10 +526,11 @@ async function runSearch() {
     }
     // commenti ed evidenziazioni sul testo del PDF
     for (const a of p.anns || []) {
-      const tx = (a.n ? a.n + ' — ' : '') + '«' + a.q + '»';
+      const tx = (a.k === 'sub' ? '«' + a.q + '» → «' + a.s + '»' : (a.n ? a.n + ' — ' : '') + '«' + a.q + '»');
       if (!tx.toLowerCase().includes(low)) continue;
       n++;
-      hit('comment', highlight(tx.length > 90 ? tx.slice(0, 90) + '…' : tx, q), nd.name + ' · pagina ' + idx + (a.n ? ' · commento' : ' · evidenziato'), () => openNotebook(nd.id, p.id));
+      const kind = N.isFix(a) ? ' · ' + N.KIND_LABEL[a.k].toLowerCase() : a.n ? ' · commento' : ' · evidenziato';
+      hit('comment', highlight(tx.length > 90 ? tx.slice(0, 90) + '…' : tx, q), nd.name + ' · pagina ' + idx + kind, () => openNotebook(nd.id, p.id));
       break;
     }
   }
@@ -1011,7 +1014,7 @@ async function pdfText(rec, touched) {
   return str;
 }
 async function pageText(rec, touched) {
-  const notes = [...(rec.blocks || []).map(blockText), ...(rec.anns || []).map((a) => a.n)].filter(Boolean).join('\n');
+  const notes = [...(rec.blocks || []).map(blockText), ...(rec.anns || []).map((a) => a.n || a.s)].filter(Boolean).join('\n');
   if (rec.type !== 'pdf') return notes;
   const t = await pdfText(rec, touched);
   return notes ? t + '\n' + notes : t;
@@ -1291,7 +1294,7 @@ function startSelectMode() {
   if (!seen) toast('Tieni premuto su una parola e trascina per scegliere il testo', 3500);
 }
 
-// ---------- Selezione: Copia · Evidenzia · Commenta · Copia con commento ----------
+// ---------- Selezione: Copia · Evidenzia · Barra · Modifica · Commenta · Copia con commento ----------
 const selMenu = $('selmenu');
 let selSnap = null, selTimer = 0, menuDown = 0;
 const inTextLayer = (n) => { const e = n && (n.nodeType === 1 ? n : n.parentElement); return !!(e && e.closest('.textLayer')); };
@@ -1340,6 +1343,17 @@ function showSelMenu() {
   selMenu.hidden = false;
   placeSelMenu();
 }
+// schermo stretto (iPad in verticale, iPhone): icona sopra la parola; se ancora non ci sta, su due righe
+let selFitW = 0;
+function fitSelMenu() {
+  if (selFitW === innerWidth) return;
+  selFitW = innerWidth;
+  selMenu.classList.remove('compact', 'wrap');
+  selMenu.style.left = '0px';
+  const max = innerWidth - 16;
+  if (selMenu.offsetWidth > max) selMenu.classList.add('compact');
+  if (selMenu.offsetWidth > max) selMenu.classList.add('wrap');
+}
 function hideSelMenu() { selMenu.hidden = true; }
 // fine della selezione: dopo un'azione, cambiando strumento o quaderno
 function endSel() {
@@ -1350,6 +1364,7 @@ function endSel() {
 // il menu sta sotto il testo scelto (sopra di solito c'è il menu di iOS); se sotto non c'è posto, sopra
 function placeSelMenu() {
   if (!selSnap || selMenu.hidden) return;
+  fitSelMenu();
   let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
   for (const part of selSnap.parts) {
     if (!part.p.wrap.isConnected) continue;
@@ -1398,6 +1413,21 @@ function selAction(act) {
     const ch = s.parts.map((part) => { const a = newAnn(part); return { p: part.p, id: a.id, after: a }; });
     commitAnns(ch);
     toast(s.parts.length > 1 ? 'Evidenziato su ' + s.parts.length + ' pagine' : 'Evidenziato');
+    return;
+  }
+  if (act === 'strike') {
+    const ch = s.parts.map((part) => { const a = newFix(part, ''); return { p: part.p, id: a.id, after: a }; });
+    commitAnns(ch);
+    toast('Barrato: da cancellare' + (s.parts.length > 1 ? ' (su ' + s.parts.length + ' pagine)' : ''));
+    return;
+  }
+  if (act === 'edit') {
+    // il testo nuovo prende il posto di tutta la selezione: sulla prima pagina «sostituisci», sulle altre «cancella»
+    const old = s.parts.map((x) => x.quote).join(' ');
+    editNote({ p: s.parts[0].p, quote: old, value: old, mode: 'sub', onSave: (txt) => {
+      commitAnns(s.parts.map((part, i) => { const a = newFix(part, i ? '' : txt); return { p: part.p, id: a.id, after: a }; }));
+      toast((txt ? 'Correzione salvata: da sostituire' : 'Testo nuovo vuoto: segnato da cancellare') + (s.parts.length > 1 ? ' (su ' + s.parts.length + ' pagine)' : ''));
+    } });
     return;
   }
   // commento: si aggancia al testo della prima pagina della selezione
@@ -1494,6 +1524,12 @@ function newAnn(part, note) {
   if (note) a.n = note;
   return a;
 }
+// Barra (text vuoto) o Modifica (text = testo nuovo): segno rosso da correttore, il PDF non cambia.
+// a: 0.3 = una versione vecchia dell'app (altro dispositivo non ancora aggiornato) la mostra come evidenziazione rossa
+function newFix(part, text) {
+  const now = Date.now();
+  return N.withFix({ id: D.uid(), q: part.quote, a: 0.3, r: snapRects(part), t: now, u: now }, text);
+}
 function setAnn(p, id, val) {
   const list = p.rec.anns || (p.rec.anns = []);
   const i = list.findIndex((x) => x.id === id);
@@ -1512,22 +1548,33 @@ function renderAnns(p) {
   p.anns.textContent = ''; p.pins.textContent = '';
   const list = p.rec.anns || [], used = [];
   for (const a of list) {
-    for (const r of a.r || []) {
-      const i = el('i', 'ann-r'); i.dataset.id = a.id;
+    const fix = N.isFix(a), rs = a.r || [];
+    for (const r of rs) {
+      const i = el('i', fix ? 'ann-r ann-x' : 'ann-r'); i.dataset.id = a.id;
       i.style.left = r.l * 100 + '%'; i.style.top = r.t * 100 + '%'; i.style.width = r.w * 100 + '%'; i.style.height = r.h * 100 + '%';
-      i.style.background = a.c; i.style.opacity = String(a.a ?? HL_ALPHA);
+      if (!fix) { i.style.background = a.c; i.style.opacity = String(a.a ?? HL_ALPHA); }
       p.anns.append(i);
     }
-    if (!a.n || !(a.r || []).length) continue;
+    if (a.k === 'sub' && rs.length) {
+      // segno ^ sotto la fine del testo barrato: lì va il testo nuovo (si legge toccando la barra o l'icona nel margine)
+      const z = rs[rs.length - 1], hh = z.h * 0.32;
+      const c = document.createElementNS(SVGNS, 'svg'); c.setAttribute('class', 'ann-caret'); c.setAttribute('viewBox', '0 0 10 7'); c.setAttribute('preserveAspectRatio', 'none');
+      const path = document.createElementNS(SVGNS, 'path'); path.setAttribute('d', 'M1 6.2 5 .8l4 5.4'); c.append(path);
+      c.style.left = (z.l + z.w - hh * p.aspect * 0.6) * 100 + '%'; c.style.top = (z.t + z.h * 0.84) * 100 + '%';
+      c.style.width = hh * p.aspect * 1.2 * 100 + '%'; c.style.height = hh * 100 + '%';
+      p.anns.append(c);
+    }
+    const tip = a.k === 'sub' ? 'Da sostituire con: «' + a.s + '»' : fix ? '' : a.n;
+    if (!tip || !rs.length) continue;
     // icona del commento nel margine destro, all'altezza della prima riga (due commenti vicini: una sotto l'altra)
     const ch = p.ch || fitWidth() * p.aspect, step = 46 / Math.max(200, ch);
     let y = a.r[0].t + a.r[0].h / 2;
     while (used.some((u) => Math.abs(u - y) < step)) y += step;
     used.push(y);
-    const b = el('button', 'ann-pin'); b.type = 'button'; b.dataset.id = a.id;
+    const b = el('button', fix ? 'ann-pin sub' : 'ann-pin'); b.type = 'button'; b.dataset.id = a.id;
     b.style.top = 'calc(' + y * 100 + '% - 22px)';
-    b.setAttribute('aria-label', 'Commento: ' + a.n); b.title = a.n;
-    const dot = el('i'); dot.append(icon('comment')); b.append(dot);
+    b.setAttribute('aria-label', fix ? tip : 'Commento: ' + a.n); b.title = tip;
+    const dot = el('i'); dot.append(icon(fix ? 'caret' : 'comment')); b.append(dot);
     b.onclick = () => annMenu(p, a.id);
     p.pins.append(b);
   }
@@ -1538,6 +1585,7 @@ async function annMenu(p, id) {
   if (!a) return;
   endSel();
   const i = nb.pages.indexOf(p);
+  if (N.isFix(a)) { fixMenu(p, a, i); return; }
   const r = await modal({ title: (a.n ? 'Commento' : 'Testo evidenziato') + ' · pagina ' + (i + 1), text: '«' + clip(a.q, 240) + '»' + (a.n ? '\n\n' + a.n : ''), options: [
     { label: a.n ? 'Modifica il commento' : 'Aggiungi un commento', value: 'edit', icon: 'comment' },
     { label: 'Copia per Claude Code', value: 'copy', icon: 'copy-note' },
@@ -1552,45 +1600,80 @@ async function annMenu(p, id) {
     toast(txt ? 'Commento salvato' : 'Commento tolto: resta l’evidenziazione');
   } });
 }
-// piccolo editor del commento. onSave(testo) parte dentro il tocco su "Salva": così su iPad si può anche copiare subito
+// Barra / Modifica toccate di nuovo: cambia il testo nuovo, passa da una all'altra, copia o elimina
+async function fixMenu(p, a, i) {
+  const sub = a.k === 'sub', id = a.id;
+  const r = await modal({ title: N.KIND_LABEL[a.k] + ' · pagina ' + (i + 1), text: '«' + clip(a.q, 240) + '»' + (sub ? '\n\n→ «' + clip(a.s || '', 400) + '»' : ''), options: [
+    { label: sub ? 'Modifica il testo nuovo' : 'Sostituisci con un testo nuovo', value: 'edit', icon: 'edit' },
+    ...(sub ? [{ label: 'Solo da cancellare', value: 'strike', icon: 'strike' }] : []),
+    { label: 'Copia per Claude Code', value: 'copy', icon: 'copy-note' },
+    { label: sub ? 'Elimina la correzione' : 'Togli la barra', value: 'del', danger: true, icon: 'trash' }] });
+  if (!r) return;
+  if (r.value === 'copy') { copyText(N.entryMarkdown(nb.node.name, { page: i + 1, q: a.q, k: a.k, s: a.s }), 'Copiato in Markdown: incollalo in Claude Code'); return; }
+  if (r.value === 'del') { commitAnns([{ p, id, after: null }]); toast(sub ? 'Correzione eliminata' : 'Barra tolta'); return; }
+  const save = (txt) => { const v = N.withFix(a, txt); v.u = Date.now(); commitAnns([{ p, id, after: v }]); };
+  if (r.value === 'strike') { save(''); toast('Ora è solo da cancellare'); return; }
+  editNote({ p, quote: a.q, value: sub ? a.s : a.q, mode: 'sub', onSave: (txt) => {
+    save(txt);
+    toast(txt ? 'Correzione salvata: da sostituire' : 'Testo nuovo vuoto: resta da cancellare');
+  } });
+}
+// piccolo editor del commento. onSave(testo) parte dentro il tocco su "Salva": così su iPad si può anche copiare subito.
+// mode 'sub' (Modifica): sopra il testo vecchio barrato, sotto il campo col testo nuovo già pieno, da correggere
 const cdlg = $('cdlg');
-function editNote({ p, quote, value = '', color = S.hl.color, copy = false, onSave }) {
-  const ta = $('cdlg-text');
-  $('cdlg-title').textContent = (value ? 'Modifica il commento' : 'Commento') + ' · pagina ' + (nb.pages.indexOf(p) + 1);
+function editNote({ p, quote, value = '', color = S.hl.color, copy = false, mode = 'note', onSave }) {
+  const ta = $('cdlg-text'), sub = mode === 'sub', lab = $('cdlg-label');
+  $('cdlg-title').textContent = (sub ? 'Modifica il testo' : value ? 'Modifica il commento' : 'Commento') + ' · pagina ' + (nb.pages.indexOf(p) + 1);
   $('cdlg-quote').textContent = '«' + clip(quote, 400) + '»';
-  $('cdlg-quote').style.setProperty('--c', color);
+  $('cdlg-quote').style.setProperty('--c', sub ? N.STRIKE : color);
+  cdlg.classList.toggle('sub', sub);
+  lab.hidden = !sub; lab.classList.remove('warn'); lab.textContent = 'Scrivi il testo nuovo';
+  ta.placeholder = sub ? 'Scrivi il testo nuovo… (vuoto = solo da cancellare)' : 'Scrivi il tuo commento…';
   ta.value = value;
   $('cdlg-ok').textContent = copy ? 'Salva e copia' : 'Salva';
   const close = () => { if (cdlg.open) cdlg.close(); };
-  $('cdlg-ok').onclick = () => { const t = ta.value.trim(); close(); onSave(t); };
+  $('cdlg-ok').onclick = () => {
+    const t = ta.value.trim();
+    if (sub && t && N.sameText(t, quote)) { lab.textContent = 'È ancora uguale al testo vecchio: correggilo qui sotto'; lab.classList.add('warn'); ta.focus(); return; }
+    close(); onSave(t);
+  };
   $('cdlg-cancel').onclick = close;
   cdlg.showModal();
   ta.focus();
+  if (sub) { ta.setSelectionRange(ta.value.length, ta.value.length); ta.scrollTop = ta.scrollHeight; }
 }
 cdlg.addEventListener('click', (e) => { if (e.target === cdlg) cdlg.close(); });
 
 // ---------- Pannello Commenti ed esportazione per Claude Code ----------
+// in ordine di libro: pagina per pagina, dall'alto in basso
 function annEntries() {
   const out = [];
-  nb.pages.forEach((p, i) => { for (const a of p.rec.anns || []) out.push({ p, a, page: i + 1, q: a.q, n: a.n }); });
+  nb.pages.forEach((p, i) => { for (const a of N.sortAnns([...(p.rec.anns || [])])) out.push({ p, a, page: i + 1, q: a.q, n: a.n, k: a.k, s: a.s }); });
   return out;
 }
 function renderAnnList() {
   const ul = $('ann-list'), info = $('ann-count');
   ul.textContent = ''; info.textContent = '';
-  const list = annEntries(), nn = list.filter((x) => x.n).length;
+  const list = annEntries(), cnt = { note: 0, hl: 0, del: 0, sub: 0 };
+  for (const e of list) cnt[N.annKind(e.a)]++;
   $('btn-notes').dataset.n = list.length ? String(list.length) : '';
   $('btn-md-copy').disabled = $('btn-md-share').disabled = !list.length;
   if (!list.length) {
-    info.append('Ancora niente. Scegli lo strumento ', el('b', '', 'Seleziona'), ', tieni premuto su una frase del PDF e tocca ', el('b', '', 'Evidenzia'), ' o ', el('b', '', 'Commenta'), '.');
+    info.append('Ancora niente. Scegli lo strumento ', el('b', '', 'Seleziona'), ', tieni premuto su una frase del PDF e tocca ', el('b', '', 'Evidenzia'), ' o ', el('b', '', 'Commenta'),
+      '. Per correggere il testo: ', el('b', '', 'Barra'), ' (da cancellare) o ', el('b', '', 'Modifica'), ' (da sostituire con un testo nuovo).');
     return;
   }
-  info.textContent = [nn ? plural(nn, 'commento', 'commenti') : '', list.length - nn ? plural(list.length - nn, 'evidenziazione', 'evidenziazioni') : ''].filter(Boolean).join(' · ');
+  info.textContent = [cnt.note ? plural(cnt.note, 'commento', 'commenti') : '', cnt.hl ? plural(cnt.hl, 'evidenziazione', 'evidenziazioni') : '',
+    cnt.del ? cnt.del + ' da cancellare' : '', cnt.sub ? cnt.sub + ' da sostituire' : ''].filter(Boolean).join(' · ');
   for (const e of list) {
     const li = el('li'), go = el('button', 'row-go ann-row'); go.type = 'button';
-    const dot = el('i', 'adot'); dot.style.background = e.a.c;
-    const tx = el('span', 'tx'); tx.append(el('b', '', 'Pagina ' + e.page), el('span', 'q', '«' + e.a.q + '»'));
-    if (e.a.n) tx.append(el('span', 'nt', e.a.n));
+    const k = N.annKind(e.a), fix = N.isFix(e.a);
+    const dot = el('i', 'adot'); dot.style.background = fix ? N.STRIKE : e.a.c;
+    const head = el('b', '', 'Pagina ' + e.page);
+    if (fix) head.append(el('span', 'kind', N.KIND_LABEL[k]));
+    const tx = el('span', 'tx'); tx.append(head, el('span', fix ? 'q x' : 'q', '«' + e.a.q + '»'));
+    if (k === 'sub') tx.append(el('span', 'nt sub', '→ «' + e.a.s + '»'));
+    else if (e.a.n) tx.append(el('span', 'nt', e.a.n));
     go.append(dot, tx);
     go.onclick = () => showAnn(e.p, e.a.id);
     const more = el('button', 'mini'); more.type = 'button'; more.append(icon('more'));

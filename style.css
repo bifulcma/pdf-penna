@@ -271,6 +271,11 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
 .page .anns { position: absolute; inset: 0; pointer-events: none; }
 .ann-r { position: absolute; border-radius: 2px; mix-blend-mode: multiply; }
 .ann-r.flash { animation: annflash .7s var(--ease) 3; }
+/* Barra / Modifica: linea rossa sopra le lettere (a metà delle minuscole), segno ^ dove va il testo nuovo */
+.ann-r.ann-x { mix-blend-mode: normal; border-radius: 0; }
+.ann-r.ann-x::before { content: ""; position: absolute; left: 0; right: 0; top: 52%; height: max(1.5px, 9%); transform: translateY(-50%); border-radius: 2px; background: #d93025; }
+.ann-caret { position: absolute; overflow: visible; pointer-events: none; color: #d93025; }
+.ann-caret path { fill: none; stroke: currentColor; stroke-width: 2px; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 @keyframes annflash { 50% { box-shadow: 0 0 0 3px rgba(194, 102, 74, .85); } }
 .page .pins { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
 .ann-pin { position: absolute; right: 0; width: 44px; height: 44px; padding: 0; border: 0; background: none; display: grid; place-items: center; pointer-events: auto; }
@@ -278,6 +283,8 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
   box-shadow: 0 0 0 1px rgba(194, 102, 74, .28), 0 2px 8px rgba(43, 38, 35, .2); transition: transform .15s var(--ease); }
 .ann-pin .ic { width: 18px; height: 18px; stroke-width: 2; }
 .ann-pin:active i { transform: scale(.88); }
+.ann-pin.sub i { color: #d93025; box-shadow: 0 0 0 1px rgba(217, 48, 37, .3), 0 2px 8px rgba(43, 38, 35, .2); }
+.ann-pin.sub .ic { stroke-width: 2.4; }
 .page.err::after { content: attr(data-msg); position: absolute; inset: 0; display: grid; place-items: center; color: #8a8279; font-size: 15px; }
 
 /* barra rapida per scorrere centinaia di pagine (compare mentre scorri) */
@@ -348,6 +355,10 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
 .ann-row .q { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; line-height: 1.38; color: var(--ink-2); margin-top: 2px; }
 .ann-row .nt { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin-top: 6px; padding-left: 9px; border-left: 2px solid var(--accent);
   font-size: 13.5px; line-height: 1.38; color: var(--ink); }
+.ann-row .kind { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 6px; vertical-align: 1px; background: rgba(217, 48, 37, .1); color: #b3261e; font-size: 12px; font-weight: 600; letter-spacing: 0; }
+.ann-row .q.x { text-decoration: line-through; text-decoration-color: #d93025; text-decoration-thickness: 1.5px; }
+.ann-row .nt.sub { border-left-color: #d93025; }
+@media (prefers-color-scheme: dark) { .ann-row .kind, #cdlg-label.warn { color: #ff8a80; } .ann-row .kind { background: rgba(255, 138, 128, .14); } }
 #tab-anns .side-list li { align-items: flex-start; }
 #tab-anns .side-list .mini { margin-top: 4px; }
 #btn-notes[data-n]:not([data-n=""])::after { content: attr(data-n); position: absolute; top: 5px; right: 4px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px;
@@ -403,6 +414,12 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
 #selmenu .hdot { display: block; width: 18px; height: 18px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); }
 #selmenu .short { display: none; }
 #selmenu .ask-act { color: var(--accent); }
+/* schermo stretto (app.js aggiunge le classi solo se il menu non ci sta): icona sopra la parola, poi su due righe */
+#selmenu.compact { gap: 0; padding: 3px; }
+#selmenu.compact button { flex-direction: column; justify-content: center; gap: 3px; min-height: 54px; padding: 4px 8px; font-size: 12px; font-weight: 600; }
+#selmenu.compact .long { display: none; }
+#selmenu.compact .short { display: inline; }
+#selmenu.wrap { display: grid; grid-template-columns: repeat(4, auto); justify-content: center; }
 
 /* ============ Chiedi: pannello dal basso, tre altezze (compatto, metà, quasi tutto schermo) ============ */
 /* --ask-h = altezza scelta (da app.js); --ask-y = quanto scende mentre lo trascini sotto il compatto; --kb = tastiera aperta */
@@ -553,6 +570,10 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
   font-size: 17px; line-height: 1.4; resize: vertical; -webkit-user-select: text; user-select: text; }
 #cdlg-text:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
 #cdlg .dlg-btns { justify-content: flex-end; gap: 8px; margin-top: 14px; }
+#cdlg.sub #cdlg-quote { text-decoration: line-through; text-decoration-color: #d93025; text-decoration-thickness: 1.5px; }
+#cdlg-label { display: block; margin: 0 2px 6px; font-size: 14px; font-weight: 600; color: var(--ink-2); }
+#cdlg-label[hidden] { display: none; }
+#cdlg-label.warn { color: #b3261e; }
 .pill.plain { border: 0; background: none; box-shadow: none; color: var(--accent); font-weight: 500; }
 .pill.plain:active { background: var(--accent-soft); }
 #dlg-text { white-space: pre-line; }
@@ -750,10 +771,6 @@ dialog p:empty { display: none; }
 }
 /* ============ iPhone ============ */
 @media (max-width: 600px) {
-  #selmenu { gap: 0; padding: 3px; }
-  #selmenu button { flex-direction: column; justify-content: center; gap: 3px; min-height: 54px; padding: 4px 8px; font-size: 12px; font-weight: 600; }
-  #selmenu .long { display: none; }
-  #selmenu .short { display: inline; }
   .pillbar.mid { gap: 0; padding: 3px; }
   .pillbar.mid .sep { margin: 0 1px; }
   #library { padding: calc(var(--st) + 20px) calc(var(--sr) + 18px) calc(var(--sb) + 48px) calc(var(--sl) + 18px); }

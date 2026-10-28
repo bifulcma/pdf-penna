@@ -68,6 +68,8 @@
 <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.6"/></symbol>
 <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5c-2.3-2.4-3.4-5.2-3.4-8.5S9.7 5.9 12 3.5z"/></symbol>
 <symbol id="i-retry" viewBox="0 0 24 24"><path d="M19.2 12a7.2 7.2 0 1 1-2.1-5.1"/><path d="M19.5 4.5v4h-4"/></symbol>
+<symbol id="i-strike" viewBox="0 0 24 24"><path d="M16.4 7.6c-.6-1.8-2.3-3.1-4.6-3.1-2.6 0-4.5 1.5-4.5 3.5 0 1.3.7 2.2 2 2.9"/><path d="M4.5 12h15"/><path d="M14.9 14.2c1.3.7 1.9 1.6 1.9 2.7 0 2.1-2 3.6-4.8 3.6-2.4 0-4.3-1.2-4.9-3.1"/></symbol>
+<symbol id="i-caret" viewBox="0 0 24 24"><path d="M6.5 16.5 12 8l5.5 8.5"/></symbol>
 <symbol id="i-md" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2.8"/><path d="M6.5 14.8V9.2l2.4 3 2.4-3v5.6M15.8 9.2v5.6M13.7 12.8l2.1 2.1 2.1-2.1"/></symbol>
 </defs></svg>
 
@@ -207,6 +209,8 @@
 <div id="selmenu" hidden role="toolbar" aria-label="Testo selezionato">
   <button type="button" data-act="copy"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Copia</span></button>
   <button type="button" data-act="hl"><i class="hdot"></i><span>Evidenzia</span></button>
+  <button type="button" data-act="strike" title="Barra il testo: da cancellare"><svg class="ic" aria-hidden="true"><use href="#i-strike"/></svg><span>Barra</span></button>
+  <button type="button" data-act="edit" title="Correggi il testo: da sostituire con un testo nuovo"><svg class="ic" aria-hidden="true"><use href="#i-edit"/></svg><span>Modifica</span></button>
   <button type="button" data-act="note"><svg class="ic" aria-hidden="true"><use href="#i-comment"/></svg><span>Commenta</span></button>
   <button type="button" data-act="copynote"><svg class="ic" aria-hidden="true"><use href="#i-copy-note"/></svg><span class="long">Copia con commento</span><span class="short">Copia + nota</span></button>
   <button type="button" data-act="ask" class="ask-act"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg><span>Chiedi</span></button>
@@ -217,6 +221,7 @@
   <form method="dialog" id="cdlg-form">
     <h3 id="cdlg-title">Commento</h3>
     <blockquote id="cdlg-quote"></blockquote>
+    <label id="cdlg-label" for="cdlg-text" hidden>Scrivi il testo nuovo</label>
     <textarea id="cdlg-text" rows="4" placeholder="Scrivi il tuo commento…" enterkeyhint="enter"></textarea>
     <div class="dlg-btns"><button type="button" id="cdlg-cancel" class="pill plain">Annulla</button><button type="button" id="cdlg-ok" class="pill accent">Salva</button></div>
   </form>

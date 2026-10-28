@@ -101,7 +101,7 @@ try {
   await device(P, 1024, 768);
   await P.goto(APP); await P.waitFor('window.__penna && document.getElementById("btn-new-nb")');
   await P.eval(SEL_FN + '; return 1');
-  ok('Safari vecchio emulato (API moderne tolte, polyfill) · versione v10 · modulo ask.js caricato', await q('window.__stripped===true && __penna.version==="v10" && !!__penna.A && typeof __penna.A.pickPages==="function"'));
+  ok('Safari vecchio emulato (API moderne tolte, polyfill) · versione ' + await q('__penna.version') + ' (>= v10) · modulo ask.js caricato', await q('window.__stripped===true && +__penna.version.slice(1) >= 10 && !!__penna.A && typeof __penna.A.pickPages==="function"'));
 
   await P.setFiles('#pdf-input', [OUT + '/reale7.pdf']);
   await P.waitFor(`!document.getElementById('notebook').hidden && __penna.nb.pages[0] && __penna.nb.pages[0].wrap.dataset.rendered==='1'`, 20000, 'PDF aperto');
@@ -147,7 +147,7 @@ try {
   await tap(P, '#tool-select');
   await P.waitFor(`__penna.nb.pages[0].tl && __penna.nb.pages[0].tl.end`, 10000, 'livello di testo');
   await select(0, 'La libertà è il dono più grande');
-  ok('menu sulla selezione: Copia · Evidenzia · Commenta · Copia con commento · Chiedi', await q(`[...document.querySelectorAll('#selmenu button')].map(b=>b.dataset.act).join(',')==='copy,hl,note,copynote,ask'`));
+  ok('menu sulla selezione: Copia · Evidenzia · Barra · Modifica · Commenta · Copia con commento · Chiedi', await q(`[...document.querySelectorAll('#selmenu button')].map(b=>b.dataset.act).join(',')==='copy,hl,strike,edit,note,copynote,ask'`));
   await shot(P, 'ipad-selezione-menu-chiedi');
   await tap(P, '#selmenu button[data-act="ask"]');
   await P.waitFor(`!document.getElementById('ask').hidden && !document.getElementById('ask-main').hidden`, 3000, 'pannello');

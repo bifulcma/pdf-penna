@@ -90,7 +90,7 @@ try {
   await device(P, 1024, 768);
   await P.goto(APP); await P.waitFor('window.__penna && document.getElementById("btn-new-nb")');
   await P.eval(SEL_FN + '; return 1');
-  ok('Safari vecchio emulato · versione v10', await q('window.__stripped===true && __penna.version==="v10" && typeof __penna.A.collectSources==="function"'));
+  ok('Safari vecchio emulato · versione ' + await q('__penna.version') + ' (>= v10)', await q('window.__stripped===true && +__penna.version.slice(1) >= 10 && typeof __penna.A.collectSources==="function"'));
   await P.setFiles('#pdf-input', [OUT + '/reale8.pdf']);
   await P.waitFor(`!document.getElementById('notebook').hidden && __penna.nb.pages[0] && __penna.nb.pages[0].wrap.dataset.rendered==='1'`, 20000, 'PDF aperto');
 

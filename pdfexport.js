@@ -1,5 +1,7 @@
 // Esporta un quaderno in PDF (pdf-lib, locale). Sfondi, immagini, testo, evidenziazioni e tratti vengono "stampati" sulle pagine;
 // i commenti diventano note PDF.
+import { STRIKE } from './notes.js';
+
 export const LAYOUT = { font: 0.028, margin: 0.06, lined: 0.055, grid: 0.04, a4: 1.4142, lh: 1.35, gap: 0.5 };
 export const HL_ALPHA = 0.35;
 
@@ -47,28 +49,45 @@ export function drawStrokes(page, list) {
   }
 }
 
+// altezza della barra di Barra/Modifica dentro la riga (frazione dall'alto): a metà delle lettere minuscole, come sullo schermo
+export const STRIKE_Y = 0.52;
 // evidenziazioni del testo (sotto i tratti, effetto pennarello) e commenti come note PDF:
-// Anteprima, Acrobat e simili mostrano l'icona del commento e, toccandola, il testo
+// Anteprima, Acrobat e simili mostrano l'icona del commento e, toccandola, il testo.
+// Barra / Modifica (a.k 'del' / 'sub'): linea rossa sopra il testo; Modifica ha anche il segno ^ e una nota col testo nuovo.
 export function drawAnns(doc, page, anns) {
   if (!anns || !anns.length) return;
-  const { rgb, BlendMode, PDFHexString, PDFString } = window.PDFLib;
+  const { rgb, BlendMode, PDFHexString, PDFString, LineCapStyle } = window.PDFLib;
   const { width: w, height: h } = page.getSize();
   const rot = ((page.getRotation().angle % 360) + 360) % 360;
+  const dispH = rot % 180 ? w : h;
   for (const a of anns) {
-    const [r, g, b] = hexToRgb(a.c || '#f5c400');
+    const fix = a.k === 'del' || a.k === 'sub';
+    const [r, g, b] = hexToRgb(fix ? STRIKE : a.c || '#f5c400');
     for (const q of a.r || []) {
+      if (fix) {
+        const y = q.t + q.h * STRIKE_Y, p1 = toPdf(q.l, y, w, h, rot), p2 = toPdf(q.l + q.w, y, w, h, rot);
+        page.drawLine({ start: { x: p1[0], y: p1[1] }, end: { x: p2[0], y: p2[1] }, thickness: Math.max(0.8, q.h * dispH * 0.09), color: rgb(r, g, b), lineCap: LineCapStyle.Round });
+        continue;
+      }
       const p1 = toPdf(q.l, q.t, w, h, rot), p2 = toPdf(q.l + q.w, q.t + q.h, w, h, rot);
       page.drawRectangle({ x: Math.min(p1[0], p2[0]), y: Math.min(p1[1], p2[1]), width: Math.abs(p2[0] - p1[0]), height: Math.abs(p2[1] - p1[1]),
         color: rgb(r, g, b), opacity: a.a ?? HL_ALPHA, blendMode: BlendMode.Multiply });
     }
     const q = (a.r || [])[0];
-    if (!a.n || !q) continue;
+    const note = a.k === 'sub' ? 'Sostituisci con: «' + (a.s || '') + '»' : a.k === 'del' ? '' : a.n;
+    if (!note || !q) continue;
+    if (a.k === 'sub') {
+      // segno ^ sotto la fine del testo barrato (punto in cui va il testo nuovo)
+      const z = a.r[a.r.length - 1], cx = z.l + z.w, cy = z.t + z.h * 0.88, d = z.h * 0.26, ar = rot % 180 ? h / w : w / h;
+      const pts = [[cx - d * 0.6 / ar, cy + d], [cx, cy], [cx + d * 0.6 / ar, cy + d]].map(([u, v]) => toPdf(u, v, w, h, rot));
+      for (let i = 1; i < 3; i++) page.drawLine({ start: { x: pts[i - 1][0], y: pts[i - 1][1] }, end: { x: pts[i][0], y: pts[i][1] }, thickness: Math.max(0.8, z.h * dispH * 0.08), color: rgb(r, g, b), lineCap: LineCapStyle.Round });
+    }
     // nota nel margine destro, all'altezza della prima riga evidenziata (come sullo schermo)
     const [x, y] = toPdf(0.955, q.t + q.h / 2, w, h, rot), s = 18;
     const annot = doc.context.obj({
-      Type: 'Annot', Subtype: 'Text', Name: 'Comment', F: 4, Open: false,
+      Type: 'Annot', Subtype: 'Text', Name: a.k === 'sub' ? 'Insert' : 'Comment', F: 4, Open: false,
       Rect: [x - s / 2, y - s / 2, x + s / 2, y + s / 2], C: [r, g, b],
-      Contents: PDFHexString.fromText(a.n), T: PDFHexString.fromText('PDF Penna'), Subj: PDFHexString.fromText('«' + a.q + '»'),
+      Contents: PDFHexString.fromText(note), T: PDFHexString.fromText('PDF Penna'), Subj: PDFHexString.fromText('«' + a.q + '»'),
       M: PDFString.fromDate(new Date(a.u || a.t || Date.now())),
     });
     page.node.addAnnot(doc.context.register(annot));

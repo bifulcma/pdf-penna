@@ -138,7 +138,7 @@ try {
   await P.eval(`localStorage.setItem('penna.ai', JSON.stringify({ url: ${JSON.stringify(BURL)}, token: ${JSON.stringify(TOKEN)}, privacy: 1, webPrivacy: 1, web: true, src: 'qwen', model: {} })); return 1`);
   await P.reload(); await P.waitFor('window.__penna && document.getElementById("btn-new-nb")');
   await P.eval(SEL_FN + '; return 1');
-  ok('versione v10, visualViewport finto attivo', await q(`__penna.version==='v10' && typeof window.__kb==='function' && window.__stripped===true`));
+  ok('versione ' + await q('__penna.version') + ' (>= v10), visualViewport finto attivo', await q(`+__penna.version.slice(1) >= 10 && typeof window.__kb==='function' && window.__stripped===true`));
   await P.setFiles('#pdf-input', [OUT + '/Il ritorno del Mahdi.pdf']);
   await P.waitFor(`!document.getElementById('notebook').hidden && __penna.nb.pages[0] && __penna.nb.pages[0].wrap.dataset.rendered==='1'`, 20000, 'PDF aperto');
 

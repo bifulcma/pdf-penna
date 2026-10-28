@@ -156,7 +156,7 @@ try {
   await select(0, 'serve virtù e\npazienza.');
   const mr = await rect(P, '#selmenu'), sr = await P.eval(`const r=getSelection().getRangeAt(0).getClientRects(); const a=[...r].filter(x=>x.width>0); return {top:Math.min(...a.map(x=>x.top)), bottom:Math.max(...a.map(x=>x.bottom))}`);
   ok('selezione → menu a pillola vicino al testo (sotto o sopra), dentro lo schermo', mr.x >= 0 && mr.x + mr.w <= 1024 && mr.y > 60 && mr.y + mr.h < 768 && (Math.abs(mr.y - sr.bottom) < 40 || Math.abs(mr.y + mr.h - sr.top) < 40), JSON.stringify({ mr, sr }));
-  ok('menu: Copia · Evidenzia · Commenta · Copia con commento', await P.eval(`return [...document.querySelectorAll('#selmenu button')].map(b=>b.textContent.trim()).join('|').startsWith('Copia|Evidenzia|Commenta|Copia con commentoCopia + nota')`),
+  ok('menu: Copia · Evidenzia · Barra · Modifica · Commenta · Copia con commento', await P.eval(`return [...document.querySelectorAll('#selmenu button')].map(b=>b.textContent.trim()).join('|').startsWith('Copia|Evidenzia|Barra|Modifica|Commenta|Copia con commentoCopia + nota')`),
     await P.eval(`return [...document.querySelectorAll('#selmenu button')].map(b=>b.innerText.trim()).join('|')`));
   ok('menu: pulsanti >= 44px', (await small(P)).length === 0, JSON.stringify(await small(P)));
   await shot(P, 'ipad-selezione-menu');
