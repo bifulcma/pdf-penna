@@ -56,7 +56,7 @@ window.__strikeAt = function (pi, id) { const p = __penna.nb.pages[pi], W = p.wr
 async function select(pa, A, pb = pa, B = A) {
   if (!(await P.eval(`return __selRange(${pa}, ${JSON.stringify(A)}, ${pb}, ${JSON.stringify(B)})`))) throw new Error('frase non trovata: ' + A + ' … ' + B);
   await P.waitFor(`!document.getElementById('selmenu').hidden && document.getElementById('selmenu').style.visibility!=='hidden'`, 3000, 'menu selezione');
-  await sleep(150);
+  await sleep(300); // il menu si apre con un'animazione (0,14 s, parte dal 94%): misure solo a fine animazione
 }
 async function tapMenu(act) { await tap(P, `#selmenu button[data-act="${act}"]`); await sleep(300); }
 const anns = (pi = 0) => P.eval(`return (__penna.nb.pages[${pi}].rec.anns||[]).map(a=>({id:a.id,q:a.q,k:a.k||'',s:a.s||'',n:a.n||'',c:a.c,r:a.r.length}))`);
