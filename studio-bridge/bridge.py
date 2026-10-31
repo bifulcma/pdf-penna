@@ -61,6 +61,9 @@ DEFAULTS = {
     'backup_dir': '~/PDF-Penna',  # copie di sicurezza dei PDF esportati dall'app; vuoto = spento
     'backup_max_mb': 300,      # PDF più grandi non si copiano
     'backup_keep': 20,         # copie tenute per ogni quaderno (le più vecchie si cancellano)
+    'backup_mirror_dir': '',   # facoltativo: copia in più dei PDF dei quaderni il cui nome contiene una delle parole di backup_mirror_match
+    'backup_mirror_match': [],
+    'backup_mirror_keep': 10,  # copie tenute per quaderno nella cartella in più
     'save_answers': False,     # salva richiesta e risposta di ogni domanda in backup_dir/risposte/AAAA-MM-GG.jsonl (per rileggerle e confrontare i modelli)
     'claude_bin': '',          # vuoto = cerca `claude` nel PATH e nei posti soliti
     'claude_models': ['sonnet', 'opus'],
@@ -760,6 +763,27 @@ def backup_dir():
     except OSError:
         return ''
     return d if os.access(d, os.W_OK) else ''
+
+
+def backup_mirror(name, path):
+    """Copia il PDF appena salvato anche in backup_mirror_dir (es. la cartella dei libri), se il nome del quaderno corrisponde."""
+    d = CFG['backup_mirror_dir'].strip()
+    words = [w.lower() for w in CFG['backup_mirror_match'] if isinstance(w, str) and w]
+    if not d or not any(w in name.lower() for w in words):
+        return ''
+    d = os.path.realpath(os.path.expanduser(d))
+    try:
+        os.makedirs(d, mode=0o755, exist_ok=True)
+        dest = os.path.join(d, '%s_%s.pdf' % (name, time.strftime('%Y-%m-%d_%H%M%S')))
+        shutil.copyfile(path, dest)
+        os.chmod(dest, 0o644)
+        mine = sorted(f for f in os.listdir(d) if f.startswith(name + '_') and f.endswith('.pdf'))
+        for f in mine[:-max(1, CFG['backup_mirror_keep'])]:
+            os.remove(os.path.join(d, f))
+        return os.path.basename(dest)
+    except OSError as e:
+        log('backup_mirror: ' + type(e).__name__)
+        return ''
 
 
 def save_answer(body, provider, model, web, result, secs, rec, confronto=False):
@@ -1660,6 +1684,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_json(400, {'error': 'Il PDF non è arrivato intero (o non è un PDF).'})
             return
         log('backup %d KB in %.1fs' % (n // 1024, time.time() - t0))
+        m = backup_mirror(name, final)
+        if m:
+            log('backup: copiato anche in ' + CFG['backup_mirror_dir'] + ' (' + m + ')')
         self.send_json(200, {'ok': True, 'file': name + '/' + os.path.basename(final), 'bytes': n})
 
     # --- risposta in streaming (Server-Sent Events): meta, (status | queries | search | sources | thinking | text)…, done | error.
