@@ -250,7 +250,7 @@ const INST = ROOT + '/studio-bridge/install.sh', UNINST = ROOT + '/studio-bridge
 if (process.env.SKIP_INSTALL) console.log('(installazione saltata)');
 else try {
   const fakeHome = TMP + '/home-inst'; fs.mkdirSync(fakeHome, { recursive: true });
-  const LABEL = 'com.marco.studio-bridge.test', PORT = '8795';
+  const LABEL = 'com.marco.studio-bridge.test', PORT = '8796'; // non 8795: è la porta della Scrivania sullo Studio
   const env = { ...process.env, HOME: fakeHome, SB_LABEL: LABEL, SB_PORT: PORT, SB_NO_TAILSCALE_SERVE: '1' };
   const run = (cmd, args, extra = {}) => { try { return { code: 0, out: execFileSync(cmd, args, { env: { ...env, ...extra }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 }) }; } catch (e) { return { code: e.status, out: (e.stdout || '') + (e.stderr || '') }; } };
   for (const f of [INST, UNINST]) ok('sintassi bash ok: ' + path.basename(f), run('bash', ['-n', f]).code === 0);
