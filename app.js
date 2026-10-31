@@ -5,7 +5,7 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v14';
+const APP_VERSION = 'v15';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -1726,7 +1726,10 @@ const PRIVACY_WEB = 'Con «Cerca sul web» la tua domanda e alcuni pezzi del tes
 const askEl = $('ask'), askAns = $('ask-answer');
 // Gemma c'è solo se il bridge del Mac la annuncia (bridge vecchi o senza Gemma: non si vede)
 const gemmaOk = () => !!(aiCfg.health && aiCfg.health.gemma && aiCfg.health.gemma.ok);
-const askSt = { scope: 'page', sel: null, src: aiCfg.src === 'claude' ? 'claude' : aiCfg.src === 'gemma' && gemmaOk() ? 'gemma' : 'qwen', ctrl: null, busy: false, stopped: false, last: null, answer: '', error: '', info: '', ctxInfo: '', model: '', thinking: false, saved: null,
+// Argon (agy di Antigravity sui libri) c'è solo se il bridge lo annuncia (bridge del 31/10)
+const argonOk = () => !!(aiCfg.health && aiCfg.health.argon && aiCfg.health.argon.ok);
+const PRIVACY_ARGON = 'Argon è l’agente di Antigravity sul Mac Studio: legge tutti i tuoi libri Argon per rispondere, ma non li modifica. Lavora con i modelli Gemini di Google: la domanda e il testo del PDF passano da Google. Va bene per i libri, mai per documenti di banca o di salute.';
+const askSt = { scope: 'page', sel: null, src: aiCfg.src === 'claude' ? 'claude' : aiCfg.src === 'gemma' && gemmaOk() ? 'gemma' : aiCfg.src === 'argon' && argonOk() ? 'argon' : 'qwen', ctrl: null, busy: false, stopped: false, last: null, answer: '', error: '', info: '', ctxInfo: '', model: '', thinking: false, saved: null,
   found: [], numbered: false, searching: '', webOld: false,
   queries: [], qPlanned: false, qFound: -1, qPoor: false, qedit: false, // ricerche fatte dal Mac (fase 9) e "Modifica ricerca"
   snap: 'half', kbOn: false, kbPrev: null }; // altezza del pannello: compact | half | full; tastiera aperta
@@ -1777,6 +1780,7 @@ function paintAsk() {
   askEl.querySelectorAll('.ask-src button').forEach((b) => {
     const on = b.dataset.src === askSt.src, h = aiCfg.health && aiCfg.health[b.dataset.src];
     if (b.dataset.src === 'gemma') b.hidden = !gemmaOk() && !on;
+    if (b.dataset.src === 'argon') b.hidden = !argonOk() && !on;
     b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
     b.classList.toggle('off', !!(h && !h.ok));
     b.title = h && !h.ok ? h.error : A.SOURCES[b.dataset.src].long;
@@ -1817,6 +1821,7 @@ function paintAskWeb() {
   note.classList.toggle('warn', on && (old || plain || !!(wh && !wh.ok)));
   note.textContent = !on ? 'Spento: solo il testo del PDF'
     : old ? 'Aggiorna il Mac Studio (rilancia l’installazione), poi Prova connessione'
+      : askSt.src === 'argon' ? 'Argon lavora sui libri, non sul web: per cercare usa Claude'
       : wh && !wh.ok ? (askSt.src !== 'claude' ? A.SOURCES[askSt.src].label + ': manca la chiave Tavily sullo Studio, usa Claude' : 'Claude: ' + (wh.error || 'non può cercare'))
         : plain ? 'Ricerche poco mirate: aggiorna il Mac Studio (rilancia l’installazione)'
           : askSt.src === 'claude' ? 'Claude cerca, legge le pagine e cita le fonti' : A.SOURCES[askSt.src].label + ' sceglie le ricerche, legge le fonti migliori (Tavily) e le cita';
@@ -2025,7 +2030,7 @@ async function askContext(scope, what, src) {
       list.push({ n: i + 1, text: t });
       if (i % 20 === 19 && i < n - 1) { askSt.info = 'Leggo il PDF… pagina ' + (i + 1) + ' di ' + n; askLater(); await new Promise((r) => setTimeout(r, 0)); if (askSt.stopped) return null; }
     }
-    if (src !== 'claude') await refreshQwenCtx(src); // "Tutto il PDF" con Qwen o Gemma: tutto il libro, se entra nel contesto
+    if (src === 'qwen' || src === 'gemma') await refreshQwenCtx(src); // "Tutto il PDF" con Qwen o Gemma: tutto il libro, se entra nel contesto
     const pick = A.pickPages(list, what.question || '', { budget: A.docBudget(src, aiCfg.health), current: curIndex() + 1 });
     if (!pick.pages.length) return { error: 'Nel PDF non c’è testo da inviare: è una scansione (foto delle pagine).' };
     return { ctx: { title, scope, docText: pick.text, docNote: pick.note }, info: pick.all ? 'Tutto il PDF (' + plural(pick.pages.length, 'pagina', 'pagine') + ' con testo)' : 'Ho incluso ' + A.pagesLabel(pick.pages, pick.total), pick };
@@ -2050,10 +2055,10 @@ async function refreshHealthQuiet() {
 }
 function storeHealth(j) {
   aiCfg.health = { at: Date.now(), version: String(j.version || ''), qwen: j.qwen, claude: j.claude, web_claude: j.web_claude || null, web_qwen: j.web_qwen || null,
-    gemma: j.gemma || null, web_gemma: j.web_gemma || null, backup: j.backup || null };
+    gemma: j.gemma || null, web_gemma: j.web_gemma || null, argon: j.argon || null, backup: j.backup || null };
   // la sorgente scelta non c'è (più) sul Mac: passo alla prima che c'è
   if (!(j[askSt.src] && j[askSt.src].ok) && !askSt.busy) {
-    const alt = ['qwen', 'gemma', 'claude'].find((k) => j[k] && j[k].ok);
+    const alt = ['qwen', 'gemma', 'claude', 'argon'].find((k) => j[k] && j[k].ok);
     if (alt) { askSt.src = alt; aiCfg.src = alt; }
   }
   saveAi();
@@ -2096,8 +2101,13 @@ async function askRun(what, opts = {}) {
     if (!ok) return;
     aiCfg.privacy = 1; saveAi();
   }
+  if (askSt.src === 'argon' && !aiCfg.argonPrivacy) {
+    const ok = await modal({ title: 'Argon passa da Google', text: PRIVACY_ARGON, options: [{ label: 'Ho capito, chiedi ad Argon', value: 'ok', accent: true }] });
+    if (!ok) return;
+    aiCfg.argonPrivacy = 1; saveAi();
+  }
   // opts.queries = ricerche corrette a mano ("Modifica ricerca"): si cerca sul web con quelle, così come sono
-  const src = askSt.src, model = aiCfg.model[src] || '', queries = opts.queries && opts.queries.length ? opts.queries : null, act = what.action ? A.actionById(what.action) : null, web = !!queries || !!aiCfg.web || !!(act && act.web && aiCfg.webPrivacy); // «Verifica» cerca sul web se l'hai già autorizzato una volta
+  const src = askSt.src, model = aiCfg.model[src] || '', queries = opts.queries && opts.queries.length ? opts.queries : null, act = what.action ? A.actionById(what.action) : null, web = src !== 'argon' && (!!queries || !!aiCfg.web || !!(act && act.web && aiCfg.webPrivacy)); // Argon non cerca sul web // «Verifica» cerca sul web se l'hai già autorizzato una volta
   askSt.last = { what, scope: askSt.scope, src, model, web, queries };
   askSt.busy = true; askSt.stopped = false; askSt.answer = ''; askSt.error = ''; askSt.saved = null; askSt.thinking = false;
   askSt.found = []; askSt.numbered = false; askSt.searching = ''; askSt.webOld = false;
@@ -2244,10 +2254,10 @@ function aiStatusLine(h) {
   const ul = $('ai-status'); ul.textContent = '';
   ul.hidden = !h;
   if (!h) return;
-  for (const k of ['qwen', 'gemma', 'claude']) {
-    if (k === 'gemma' && !(h.gemma && h.gemma.ok)) continue; // Gemma si mostra solo se c'è
+  for (const k of ['qwen', 'gemma', 'claude', 'argon']) {
+    if ((k === 'gemma' || k === 'argon') && !(h[k] && h[k].ok)) continue; // Gemma e Argon si mostrano solo se ci sono
     const x = h[k] || {}, li = el('li');
-    li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', A.SOURCES[k].label + (x.ok ? (k !== 'claude' ? ' · ' + x.default : ' · abbonamento' + (x.plan ? ' ' + x.plan : '')) : ' · ' + (x.error || 'non disponibile'))));
+    li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', A.SOURCES[k].label + (x.ok ? (k === 'argon' ? ' · legge i libri · ' + x.default : k !== 'claude' ? ' · ' + x.default : ' · abbonamento' + (x.plan ? ' ' + x.plan : '')) : ' · ' + (x.error || 'non disponibile'))));
     ul.append(li);
   }
   if (h.backup && h.backup.ok) { const li = el('li'); li.append(el('b', 'y', '✓'), el('span', '', 'Copia sul Mac · i PDF esportati (e salvati) si copiano anche sul Mac Studio')); ul.append(li); }
@@ -2275,6 +2285,9 @@ function paintAiSrc() {
   const sel = $('ai-src'), has = sel.querySelector('option[value="gemma"]');
   if (gemmaOk() && !has) { const o = el('option', '', A.SOURCES.gemma.long); o.value = 'gemma'; sel.insertBefore(o, sel.querySelector('option[value="claude"]')); }
   else if (!gemmaOk() && has && askSt.src !== 'gemma') has.remove();
+  const hasA = sel.querySelector('option[value="argon"]');
+  if (argonOk() && !hasA) { const o = el('option', '', A.SOURCES.argon.long); o.value = 'argon'; sel.append(o); }
+  else if (!argonOk() && hasA && askSt.src !== 'argon') hasA.remove();
   sel.value = askSt.src;
 }
 function renderAi() {

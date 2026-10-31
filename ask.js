@@ -8,6 +8,7 @@ export const SOURCES = {
   qwen: { label: 'Qwen', long: 'Studio · Qwen (gratis)', budget: 24000 },
   gemma: { label: 'Gemma', long: 'Studio · Gemma (gratis, ottimo italiano)', budget: 24000 }, // solo se il bridge la annuncia
   claude: { label: 'Claude', long: 'Studio · Claude (abbonamento)', budget: 60000 },
+  argon: { label: 'Argon', long: 'Studio · Argon (Antigravity: legge tutti i libri, passa da Google)', budget: 60000 }, // solo se il bridge lo annuncia
 };
 // Quanto testo del PDF mandare. Se il bridge dice quanto contesto ha Qwen o Gemma (num_ctx, in token) e supera i 16k,
 // si manda fino a ~3 caratteri per token, lasciando 16k token per istruzioni, domanda e risposta: un libro intero
@@ -17,7 +18,8 @@ export function docBudget(src, health) {
   return src !== 'claude' && Number.isInteger(n) && n > 16384 ? Math.max(base, (n - 16000) * 3) : base;
 }
 export const CLAUDE_MODELS = { sonnet: 'Sonnet (veloce)', opus: 'Opus (più accurato)', haiku: 'Haiku (rapidissimo)', fable: 'Fable' };
-export const modelLabel = (src, m) => (src === 'claude' ? (CLAUDE_MODELS[m] || m || 'Sonnet').replace(/ \(.*\)$/, '') : m || 'modello predefinito');
+export const modelLabel = (src, m) => (src === 'claude' ? (CLAUDE_MODELS[m] || m || 'Sonnet').replace(/ \(.*\)$/, '')
+  : src === 'argon' ? (m || 'gemini-4-argon-medium').replace(/^gemini-4-argon-(\w+)$/, (_, l) => 'Gemini Argon ' + l) : m || 'modello predefinito');
 
 // ---------- indirizzo del bridge e token ----------
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/;
