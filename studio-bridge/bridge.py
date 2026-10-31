@@ -61,6 +61,7 @@ DEFAULTS = {
     'backup_dir': '~/PDF-Penna',  # copie di sicurezza dei PDF esportati dall'app; vuoto = spento
     'backup_max_mb': 300,      # PDF più grandi non si copiano
     'backup_keep': 20,         # copie tenute per ogni quaderno (le più vecchie si cancellano)
+    'save_answers': False,     # salva richiesta e risposta di ogni domanda in backup_dir/risposte/AAAA-MM-GG.jsonl (per rileggerle e confrontare i modelli)
     'claude_bin': '',          # vuoto = cerca `claude` nel PATH e nei posti soliti
     'claude_models': ['sonnet', 'opus'],
     'claude_default': 'sonnet',
@@ -759,6 +760,28 @@ def backup_dir():
     except OSError:
         return ''
     return d if os.access(d, os.W_OK) else ''
+
+
+def save_answer(body, provider, model, web, result, secs, rec, confronto=False):
+    """Una riga JSON per domanda in backup_dir/risposte/AAAA-MM-GG.jsonl (solo se save_answers è acceso)."""
+    if not CFG['save_answers']:
+        return
+    bdir = backup_dir()
+    if not bdir:
+        return
+    d = os.path.join(bdir, 'risposte')
+    riga = {'ora': time.strftime('%Y-%m-%d %H:%M:%S'), 'provider': provider, 'model': model, 'web': web,
+            'esito': result, 'secondi': round(secs, 1), 'confronto': bool(confronto),
+            'risposta': ''.join(rec.get('text', [])), 'ricerche': rec.get('queries'), 'fonti': rec.get('sources'),
+            'richiesta': body}
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        with BACKUP_LOCK:
+            fd = os.open(os.path.join(d, time.strftime('%Y-%m-%d') + '.jsonl'), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(riga, ensure_ascii=False) + '\n')
+    except OSError as e:
+        log('save_answer: ' + type(e).__name__)
 
 
 def backup_name(raw):
@@ -1560,8 +1583,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.send_json(503, {'error': MSG_OLD_CLAUDE_WEB})
                     return
                 job = ClaudeJob(info, model, system, messages, wopt if web else None)
+            self._rec = {'text': []}
             result = self.stream(job, provider, model, web)
             log('ask %s %s%s %d caratteri -> %s in %.1fs' % (provider, model, ' +web' if web else '', sum(len(m['content']) for m in messages), result, time.time() - t0))
+            save_answer(body, provider, model, web, result, time.time() - t0, self._rec,
+                        confronto=self.headers.get('X-Penna-Confronto') == '1')
         finally:
             SEM.release()
 
@@ -1671,12 +1697,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 last = sent = time.time()
                 if kind == 'text':
                     got_any = True
+                    getattr(self, '_rec', {}).setdefault('text', []).append(val)
                     self.event('text', {'t': val})
                 elif kind == 'thinking':
                     got_any = True
                     self.event('thinking', {})
                 elif kind in ('status', 'queries', 'search', 'sources'):  # "scelgo cosa cercare", le ricerche, "sto cercando: …", le pagine
                     got_any = True
+                    if kind in ('queries', 'sources') and hasattr(self, '_rec'):
+                        self._rec[kind] = val
                     self.event(kind, val)
                 elif kind == 'error':
                     self.event('error', {'message': val})
