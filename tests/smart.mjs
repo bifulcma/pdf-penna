@@ -29,7 +29,7 @@ try {
   const L = await startBridge('L9', { ...base, port: 8762, plan_timeout: 2 }, { FAKE_CLAUDE_DUMP: DUMP }, { 'tavily.key': KEY + '\n' });
 
   // ======================= /health =======================
-  ok('/health: versione 3', (await req(W, 'GET', '/health')).json?.version === '3');
+  ok('/health: versione 4', (await req(W, 'GET', '/health')).json?.version === '4');
 
   // ======================= Qwen: il caso reale (Sufyani) =======================
   let p0 = ol.st.plans.length, t0 = tv.st.requests.length;

@@ -5,7 +5,7 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v13';
+const APP_VERSION = 'v14';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -1724,7 +1724,9 @@ const aiReady = () => !!(aiCfg.url && aiCfg.token);
 const PRIVACY = 'Il testo selezionato viene inviato al tuo Mac Studio (e, se scegli Claude, a Anthropic con il tuo abbonamento). Non parte niente finché non tocchi un’azione o Invia.';
 const PRIVACY_WEB = 'Con «Cerca sul web» la tua domanda e alcuni pezzi del testo possono uscire dal Mac Studio verso internet: con Claude li usa Anthropic per cercare e leggere pagine; con Qwen la ricerca va a Tavily (un servizio di ricerca). Le pagine trovate sono trattate come dati, non come ordini. Puoi spegnerlo quando vuoi.';
 const askEl = $('ask'), askAns = $('ask-answer');
-const askSt = { scope: 'page', sel: null, src: aiCfg.src === 'claude' ? 'claude' : 'qwen', ctrl: null, busy: false, stopped: false, last: null, answer: '', error: '', info: '', ctxInfo: '', model: '', thinking: false, saved: null,
+// Gemma c'è solo se il bridge del Mac la annuncia (bridge vecchi o senza Gemma: non si vede)
+const gemmaOk = () => !!(aiCfg.health && aiCfg.health.gemma && aiCfg.health.gemma.ok);
+const askSt = { scope: 'page', sel: null, src: aiCfg.src === 'claude' ? 'claude' : aiCfg.src === 'gemma' && gemmaOk() ? 'gemma' : 'qwen', ctrl: null, busy: false, stopped: false, last: null, answer: '', error: '', info: '', ctxInfo: '', model: '', thinking: false, saved: null,
   found: [], numbered: false, searching: '', webOld: false,
   queries: [], qPlanned: false, qFound: -1, qPoor: false, qedit: false, // ricerche fatte dal Mac (fase 9) e "Modifica ricerca"
   snap: 'half', kbOn: false, kbPrev: null }; // altezza del pannello: compact | half | full; tastiera aperta
@@ -1774,6 +1776,7 @@ function paintAsk() {
   askEl.classList.toggle('setup', !ready);
   askEl.querySelectorAll('.ask-src button').forEach((b) => {
     const on = b.dataset.src === askSt.src, h = aiCfg.health && aiCfg.health[b.dataset.src];
+    if (b.dataset.src === 'gemma') b.hidden = !gemmaOk() && !on;
     b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
     b.classList.toggle('off', !!(h && !h.ok));
     b.title = h && !h.ok ? h.error : A.SOURCES[b.dataset.src].long;
@@ -1814,9 +1817,9 @@ function paintAskWeb() {
   note.classList.toggle('warn', on && (old || plain || !!(wh && !wh.ok)));
   note.textContent = !on ? 'Spento: solo il testo del PDF'
     : old ? 'Aggiorna il Mac Studio (rilancia l’installazione), poi Prova connessione'
-      : wh && !wh.ok ? (askSt.src === 'qwen' ? 'Qwen: manca la chiave Tavily sullo Studio, usa Claude' : 'Claude: ' + (wh.error || 'non può cercare'))
+      : wh && !wh.ok ? (askSt.src !== 'claude' ? A.SOURCES[askSt.src].label + ': manca la chiave Tavily sullo Studio, usa Claude' : 'Claude: ' + (wh.error || 'non può cercare'))
         : plain ? 'Ricerche poco mirate: aggiorna il Mac Studio (rilancia l’installazione)'
-          : askSt.src === 'claude' ? 'Claude cerca, legge le pagine e cita le fonti' : 'Qwen sceglie le ricerche, legge le fonti migliori (Tavily) e le cita';
+          : askSt.src === 'claude' ? 'Claude cerca, legge le pagine e cita le fonti' : A.SOURCES[askSt.src].label + ' sceglie le ricerche, legge le fonti migliori (Tavily) e le cita';
 }
 let askRaf = 0;
 // "Ho cercato: …" (o "Ricerche: …" mentre lavora), l'avviso se le fonti sono scarse, e "Modifica ricerca"
@@ -2022,23 +2025,67 @@ async function askContext(scope, what, src) {
       list.push({ n: i + 1, text: t });
       if (i % 20 === 19 && i < n - 1) { askSt.info = 'Leggo il PDF… pagina ' + (i + 1) + ' di ' + n; askLater(); await new Promise((r) => setTimeout(r, 0)); if (askSt.stopped) return null; }
     }
-    if (src === 'qwen') await refreshQwenCtx(); // "Tutto il PDF" con Qwen: tutto il libro, se entra nel suo contesto
+    if (src !== 'claude') await refreshQwenCtx(src); // "Tutto il PDF" con Qwen o Gemma: tutto il libro, se entra nel contesto
     const pick = A.pickPages(list, what.question || '', { budget: A.docBudget(src, aiCfg.health), current: curIndex() + 1 });
     if (!pick.pages.length) return { error: 'Nel PDF non c’è testo da inviare: è una scansione (foto delle pagine).' };
     return { ctx: { title, scope, docText: pick.text, docNote: pick.note }, info: pick.all ? 'Tutto il PDF (' + plural(pick.pages.length, 'pagina', 'pagine') + ' con testo)' : 'Ho incluso ' + A.pagesLabel(pick.pages, pick.total), pick };
   } finally { persistTexts(touched); }
 }
-// Contesto di Qwen (num_ctx) dal bridge, in silenzio: serve a decidere quanto PDF mandare. Salvato con la salute del
-// collegamento; si rilegge se manca (bridge aggiornato dopo l'ultima prova) o ha più di 6 ore. Errori ignorati.
-async function refreshQwenCtx() {
+// Contesto di Qwen o Gemma (num_ctx) dal bridge, in silenzio: serve a decidere quanto PDF mandare. Salvato con la salute
+// del collegamento; si rilegge se manca (bridge aggiornato dopo l'ultima prova) o ha più di 6 ore. Errori ignorati.
+async function refreshQwenCtx(src = 'qwen') {
   const h = aiCfg.health;
-  if (!aiCfg.url || !aiCfg.token || !h || !h.qwen || (h.qwen.num_ctx !== undefined && Date.now() - (h.at || 0) < 6 * 3600e3)) return;
+  if (!aiCfg.url || !aiCfg.token || !h || !h[src] || (h[src].num_ctx !== undefined && Date.now() - (h.at || 0) < 6 * 3600e3)) return;
+  await refreshHealthQuiet();
+}
+// la salute del bridge riletta in silenzio (all'avvio e quando serve): nuove sorgenti (Gemma) e la copia sul Mac
+async function refreshHealthQuiet() {
+  if (!aiReady()) return;
   const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 5000);
   try {
     const r = await fetch(aiCfg.url + '/health', { headers: { Authorization: 'Bearer ' + aiCfg.token }, signal: ctrl.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' });
     const j = r.ok ? await r.json() : null;
-    if (j && j.qwen) { h.qwen = j.qwen; h.at = Date.now(); saveAi(); }
+    if (j && j.qwen) { storeHealth(j); if (!askEl.hidden && !askSt.busy) paintAsk(); }
   } catch {} finally { clearTimeout(t); }
+}
+function storeHealth(j) {
+  aiCfg.health = { at: Date.now(), version: String(j.version || ''), qwen: j.qwen, claude: j.claude, web_claude: j.web_claude || null, web_qwen: j.web_qwen || null,
+    gemma: j.gemma || null, web_gemma: j.web_gemma || null, backup: j.backup || null };
+  // la sorgente scelta non c'è (più) sul Mac: passo alla prima che c'è
+  if (!(j[askSt.src] && j[askSt.src].ok) && !askSt.busy) {
+    const alt = ['qwen', 'gemma', 'claude'].find((k) => j[k] && j[k].ok);
+    if (alt) { askSt.src = alt; aiCfg.src = alt; }
+  }
+  saveAi();
+}
+
+// ---------- Copia di sicurezza dei PDF sul Mac (bridge versione 4) ----------
+// In sottofondo: non blocca mai il salvataggio o l'esportazione sull'iPad; dice solo com'è andata.
+const macCopyOk = () => aiReady() && !!(aiCfg.health && aiCfg.health.backup && aiCfg.health.backup.ok);
+const macCopyAt = new Map(); // quaderno → ultima copia riuscita (dopo «Salva» al massimo una ogni 5 minuti)
+async function macCopy(bytes, name, id) {
+  if (!macCopyOk()) return false;
+  const max = (aiCfg.health.backup.max_mb || 300) * 1048576;
+  if (bytes.length > max) { toast('Copia sul Mac ✗ · PDF troppo grande', 4000); return false; }
+  const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 180000);
+  try {
+    const r = await fetch(aiCfg.url + '/backup?name=' + encodeURIComponent(name), { method: 'POST', body: bytes, signal: ctrl.signal,
+      headers: { Authorization: 'Bearer ' + aiCfg.token, 'Content-Type': 'application/pdf' }, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' });
+    let j = null; try { j = await r.json(); } catch {}
+    if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || 'errore ' + r.status);
+    if (id) macCopyAt.set(id, Date.now());
+    toast('Copia sul Mac ✓', 3000);
+    return true;
+  } catch (e) {
+    toast('Copia sul Mac ✗ · ' + (e.name === 'AbortError' ? 'il Mac non risponde' : e.message === 'Failed to fetch' || e.message === 'Load failed' ? 'Mac Studio non raggiungibile' : e.message), 4500);
+    return false;
+  } finally { clearTimeout(t); }
+}
+async function macCopyAfterSave() {
+  const node = nb.node;
+  if (!node || !macCopyOk() || exporting || Date.now() - (macCopyAt.get(node.id) || 0) < 5 * 60e3) return;
+  macCopyAt.set(node.id, Date.now()); // anche se fallisce: niente raffiche di tentativi
+  try { const bytes = await exportBytes(); if (nb.node === node) await macCopy(bytes, node.name, node.id); } catch {}
 }
 async function askRun(what, opts = {}) {
   if (askSt.busy) return;
@@ -2197,16 +2244,19 @@ function aiStatusLine(h) {
   const ul = $('ai-status'); ul.textContent = '';
   ul.hidden = !h;
   if (!h) return;
-  for (const k of ['qwen', 'claude']) {
+  for (const k of ['qwen', 'gemma', 'claude']) {
+    if (k === 'gemma' && !(h.gemma && h.gemma.ok)) continue; // Gemma si mostra solo se c'è
     const x = h[k] || {}, li = el('li');
-    li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', A.SOURCES[k].label + (x.ok ? (k === 'qwen' ? ' · ' + x.default : ' · abbonamento' + (x.plan ? ' ' + x.plan : '')) : ' · ' + (x.error || 'non disponibile'))));
+    li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', A.SOURCES[k].label + (x.ok ? (k !== 'claude' ? ' · ' + x.default : ' · abbonamento' + (x.plan ? ' ' + x.plan : '')) : ' · ' + (x.error || 'non disponibile'))));
     ul.append(li);
   }
+  if (h.backup && h.backup.ok) { const li = el('li'); li.append(el('b', 'y', '✓'), el('span', '', 'Copia sul Mac · i PDF esportati (e salvati) si copiano anche sul Mac Studio')); ul.append(li); }
   // ricerca sul web (bridge della fase 8): Claude ✓, Qwen ✓ se sul Mac c'è la chiave Tavily
   if (!h.web_claude) { const li = el('li'); li.append(el('b', 'n', '✗'), el('span', '', 'Web · il bridge sul Mac Studio è vecchio: rilancia la riga di installazione')); ul.append(li); return; }
-  for (const k of ['claude', 'qwen']) {
+  for (const k of ['claude', 'qwen', 'gemma']) {
+    if (k === 'gemma' && !(h.gemma && h.gemma.ok)) continue;
     const x = h['web_' + k] || {}, li = el('li');
-    li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', 'Web con ' + A.SOURCES[k].label + (x.ok ? (k === 'qwen' ? ' · chiave Tavily presente' : ' · ricerca e lettura di pagine') : ' · ' + (x.error || 'non disponibile'))));
+    li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', 'Web con ' + A.SOURCES[k].label + (x.ok ? (k !== 'claude' ? ' · chiave Tavily presente' : ' · ricerca e lettura di pagine') : ' · ' + (x.error || 'non disponibile'))));
     ul.append(li);
   }
 }
@@ -2220,10 +2270,17 @@ function paintAiModels() {
   sel.value = opts.some(([v]) => v === want) ? want : opts[0][0];
 }
 function paintAiChip(state, text) { $('ai-chip').dataset.state = state; $('ai-state').textContent = text; }
+// «Chi risponde di solito»: l'opzione Gemma c'è solo se il bridge la annuncia
+function paintAiSrc() {
+  const sel = $('ai-src'), has = sel.querySelector('option[value="gemma"]');
+  if (gemmaOk() && !has) { const o = el('option', '', A.SOURCES.gemma.long); o.value = 'gemma'; sel.insertBefore(o, sel.querySelector('option[value="claude"]')); }
+  else if (!gemmaOk() && has && askSt.src !== 'gemma') has.remove();
+  sel.value = askSt.src;
+}
 function renderAi() {
   $('ai-url').value = aiCfg.url || ''; $('ai-token').value = aiCfg.token || '';
   $('ai-err').hidden = true;
-  $('ai-src').value = askSt.src;
+  paintAiSrc();
   $('btn-ai-forget').hidden = !aiReady();
   $('ai-cmd').textContent = A.INSTALL_CMD;
   const h = aiCfg.health;
@@ -2261,18 +2318,17 @@ async function testAi() {
     const r = await fetch(f.url + '/health?fresh=1', { headers: { Authorization: 'Bearer ' + f.token }, signal: ctrl.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' });
     let j = null; try { j = await r.json(); } catch {}
     if (!r.ok || !j || !j.qwen) throw Object.assign(new Error(A.errorText(r.status, j)), { said: true });
-    aiCfg.health = { at: Date.now(), version: String(j.version || ''), qwen: j.qwen, claude: j.claude, web_claude: j.web_claude || null, web_qwen: j.web_qwen || null };
-    // la sorgente scelta non c'è sul Mac ma l'altra sì: passo all'altra
-    if (!j[askSt.src].ok && j[askSt.src === 'qwen' ? 'claude' : 'qwen'].ok) { askSt.src = askSt.src === 'qwen' ? 'claude' : 'qwen'; aiCfg.src = askSt.src; }
-    saveAi();
+    storeHealth(j);
     renderAi();
-    paintAiChip(j.qwen.ok || j.claude.ok ? 'idle' : 'error', j.qwen.ok && j.claude.ok ? 'Collegato: Qwen e Claude pronti' : j.qwen.ok || j.claude.ok ? 'Collegato (solo ' + (j.qwen.ok ? 'Qwen' : 'Claude') + ')' : 'Collegato, ma né Qwen né Claude sono pronti');
+    const g = j.gemma && j.gemma.ok ? ' e Gemma' : '';
+    paintAiChip(j.qwen.ok || j.claude.ok ? 'idle' : 'error', j.qwen.ok && j.claude.ok ? 'Collegato: Qwen' + (g ? ', Claude' + g : ' e Claude') + ' pronti' : j.qwen.ok || j.claude.ok ? 'Collegato (solo ' + (j.qwen.ok ? 'Qwen' : 'Claude') + g + ')' : 'Collegato, ma né Qwen né Claude sono pronti');
   } catch (e) {
     paintAiChip('error', e.said ? e.message : A.MSG_DOWN);
     aiStatusLine(null);
   } finally { clearTimeout(t); btn.disabled = false; if (!askEl.hidden) paintAsk(); }
 }
 $('btn-ai-test').onclick = testAi;
+setTimeout(refreshHealthQuiet, 1500); // all'avvio: il bridge può essere stato aggiornato (Gemma, copia sul Mac)
 $('ai-token').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); testAi(); } });
 $('btn-ai-forget').onclick = async () => {
   $('settings').close();
@@ -2724,6 +2780,7 @@ async function saveNow() {
   saveSt.dirty = pending.size > 0; saveSt.at = Date.now(); paintSave();
   btn.classList.remove('done'); void btn.offsetWidth; btn.classList.add('done');
   const msg = 'Salvato ✓ alle ' + hhmm(saveSt.at);
+  if (macCopyOk()) setTimeout(macCopyAfterSave, 1500); // copia di sicurezza sul Mac, in sottofondo
   if (!Sync.isConnected()) { toast(msg); return; }
   toast(msg + ' · invio a OneDrive…', 0);
   const res = await syncAndWait(20000);
@@ -2933,6 +2990,7 @@ async function exportPdf() {
     const name = nb.node.name.replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
     const file = new File([bytes], name, { type: 'application/pdf' });
     toast('');
+    macCopy(bytes, nb.node.name, nb.node.id); // copia di sicurezza sul Mac, in sottofondo (non aspetta)
     const canShare = navigator.canShare && navigator.canShare({ files: [file] });
     // Safari apre "Condividi" solo subito dopo un tocco: se preparare il PDF ha richiesto tempo, chiedo un tocco in più
     let how = canShare && performance.now() - t0 < 900 ? 'share' : null;

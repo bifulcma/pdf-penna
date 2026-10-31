@@ -221,7 +221,7 @@ try {
   await setField('#ask-input', 'SEMPRE-SCARSO: chi è costui?');
   await tap(P, '#ask-send');
   const seen3 = await follow();
-  ok('…il Mac risponde «versione 3» → l’avviso sparisce da solo', await q(`__penna.ask.cfg.health.version==='3' && document.getElementById('ask-web-note').textContent==='Qwen sceglie le ricerche, legge le fonti migliori (Tavily) e le cita'`), await q(`document.getElementById('ask-web-note').textContent`));
+  ok('…il Mac risponde «versione 4» → l’avviso sparisce da solo', await q(`__penna.ask.cfg.health.version==='4' && document.getElementById('ask-web-note').textContent==='Qwen sceglie le ricerche, legge le fonti migliori (Tavily) e le cita'`), await q(`document.getElementById('ask-web-note').textContent`));
   rw = await row();
   ok('fonti scarse o fuori tema: «Pochi risultati utili: provo un’altra ricerca…», poi in rosso «Non ho trovato fonti affidabili sul web»', seen3.includes('Pochi risultati utili: provo un’altra ricerca…') && rw.poor === 'Non ho trovato fonti affidabili sul web' && rw.t === 'Ho cercato: SCARSO tre; SCARSO quattro' && await q(`getComputedStyle(document.getElementById('ask-poor')).color`) !== await q(`getComputedStyle(document.getElementById('ask-queries-t')).color`), JSON.stringify([seen3, rw]));
   await shot(P, 'ipad-fonti-scarse');

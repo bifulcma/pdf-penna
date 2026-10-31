@@ -54,7 +54,7 @@ try {
 
   // ======================= /health =======================
   const hw = await req(W, 'GET', '/health', { origin: GH });
-  ok('/health (versione 3): web_claude ✓ e web_qwen ✓ (chiave «ok»)', hw.json?.version === '3' && hw.json.web_claude?.ok === true && hw.json.web_qwen?.ok === true && hw.json.web_qwen.key === 'ok', hw.text);
+  ok('/health (versione 4): web_claude ✓ e web_qwen ✓ (chiave «ok»)', hw.json?.version === '4' && hw.json.web_claude?.ok === true && hw.json.web_qwen?.ok === true && hw.json.web_qwen.key === 'ok', hw.text);
   ok('/health non contiene mai la chiave Tavily', !hw.text.includes(KEY));
   const hn = await req(N, 'GET', '/health');
   ok('/health senza chiave: web_qwen ✗ «manca la chiave Tavily sul Mac Studio», web_claude ✓, Qwen e Claude ✓', hn.json.web_qwen.ok === false && hn.json.web_qwen.key === 'manca' && /manca la chiave Tavily/.test(hn.json.web_qwen.error) && hn.json.web_claude.ok && hn.json.qwen.ok && hn.json.claude.ok, hn.text);

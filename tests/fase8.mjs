@@ -102,7 +102,7 @@ try {
   await tap(P, '#btn-ai-test');
   await P.waitFor(`document.getElementById('ai-chip').dataset.state==='idle'`, 30000, 'prova connessione');
   const status = await q(`[...document.querySelectorAll('#ai-status li')].map(l=>l.textContent)`);
-  ok('Prova connessione: Qwen ✓, Claude ✓, «Web con Claude ✓», «Web con Qwen ✓ chiave Tavily presente»', status.length === 4 && /^✓Qwen/.test(status[0]) && /^✓Claude/.test(status[1]) && status[2] === '✓Web con Claude · ricerca e lettura di pagine' && status[3] === '✓Web con Qwen · chiave Tavily presente', JSON.stringify(status));
+  ok('Prova connessione: Qwen ✓, Claude ✓, «Copia sul Mac ✓» (bridge 4), «Web con Claude ✓», «Web con Qwen ✓ chiave Tavily presente»', status.length === 5 && /^✓Qwen/.test(status[0]) && /^✓Claude/.test(status[1]) && /^✓Copia sul Mac/.test(status[2]) && status[3] === '✓Web con Claude · ricerca e lettura di pagine' && status[4] === '✓Web con Qwen · chiave Tavily presente', JSON.stringify(status));
   ok('la chiave Tavily non arriva mai all’app', !(await q(`localStorage.getItem('penna.ai')`)).includes(KEY) && !(await q(`document.body.innerHTML`)).includes(KEY));
   await P.eval(`document.querySelector('#settings details.ai-how').open=true; return 1`); await sleep(150);
   await shot(P, 'ipad-impostazioni-web');

@@ -52,6 +52,12 @@ Senza chiave, con Qwen + web compare: *"Per Qwen col web serve la chiave Tavily 
 
 **Privacy**: con il web acceso la domanda e alcuni pezzi del testo escono dal Mac verso internet (con Claude li usa Anthropic per cercare; con Qwen la ricerca va a Tavily).
 
+## Gemma (facoltativa) e copia dei PDF sul Mac
+
+- **Gemma** — se in Ollama c'è un modello Gemma (per esempio `ollama pull gemma3`), nell'app compare una terza sorgente, **Gemma**: gratis come Qwen e con un ottimo italiano. Se non c'è, l'app non la mostra. Per scegliere il modello e il suo contesto: `gemma_model` e `gemma_num_ctx` in `~/.studio-bridge/config.json` (il contesto deve essere quello del modello in Ollama, così non lo ricarica).
+- **Copia sul Mac** — quando esporti un PDF con le annotazioni (e quando tocchi **Salva**, al massimo una volta ogni 5 minuti) l'app ne manda una copia al Mac: `~/PDF-Penna/<nome del quaderno>/<data ora>.pdf`, le ultime 20 per quaderno. Se il Mac non risponde l'iPad salva lo stesso e lo dice («Copia sul Mac ✗»). Si cambia con `backup_dir`, `backup_keep`, `backup_max_mb` nel config (`backup_dir` vuoto = spenta).
+- Dopo aver aggiornato il bridge, apri PDF Penna e tocca **Impostazioni › Assistente › Prova connessione** (o riapri l'app).
+
 ## Comandi utili
 
 | Cosa | Comando |
@@ -78,4 +84,5 @@ Senza chiave, con Qwen + web compare: *"Per Qwen col web serve la chiave Tavily 
 - Claude parte come `claude -p --tools "" --no-session-persistence --safe-mode --restricted --strict-mcp-config …` (nessuno strumento, niente CLAUDE.md, MCP, plugin o hook), la domanda arriva da stdin, la chiave API eventualmente presente nell'ambiente viene tolta.
 - Col web: `--tools WebSearch,WebFetch --allowedTools WebSearch,WebFetch --permission-mode dontAsk`, da una cartella temporanea vuota (poi cancellata). Se Claude prova un altro strumento, o fa più di 10 ricerche/letture, il bridge lo ferma. Tutto il suo traffico passa da un proxy interno al bridge che lascia uscire solo verso internet pubblico (https porta 443, http porta 80): bloccati questo Mac, la rete di casa, Tailscale (100.x), indirizzi "travestiti" e IPv6 locali. Le pagine trovate sono trattate come dati, non istruzioni.
 - Qwen col web: il bridge chiede prima a Qwen le ricerche (JSON, senza strumenti), poi chiama solo `https://api.tavily.com` (chiave nell'header, mai nei registri), tiene le fonti pertinenti e affidabili e passa a Qwen titolo, URL ed estratto tra virgolette, chiedendogli di rispondere solo su quelle fonti citando [1] [2]. Le ricerche e i testi non finiscono mai nei registri. `/health` dice `web_claude` e `web_qwen` (ok / manca la chiave), mai la chiave.
+- Da `VERSION 4`: `/health` dice anche `gemma` (ok, modello, `num_ctx`), `web_gemma` e `backup` (ok, `max_mb`); `POST /backup?name=…` (corpo = il PDF, `Content-Type: application/pdf`) salva la copia: nome ripulito (niente `/`, `..`, caratteri di controllo), deve iniziare con `%PDF-`, scritto prima in un file temporaneo e poi rinominato, file e cartelle leggibili solo da te.
 - Avvio automatico: `~/Library/LaunchAgents/com.marco.studio-bridge.plist` (riparte da solo se si ferma).

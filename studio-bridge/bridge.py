@@ -2,7 +2,12 @@
 # Studio Bridge per PDF Penna: il ponte tra l'app sull'iPad e il Mac Studio.
 #
 #   iPad --https (Tailscale Serve)--> questo server su 127.0.0.1:8787 --> Qwen (Ollama, sul Mac, gratis)
+#                                                                    --> Gemma (Ollama, sul Mac, gratis; se installata)
 #                                                                    --> Claude (CLI ufficiale `claude -p`, abbonamento)
+#
+# Da VERSION 4: Gemma come terza sorgente (solo se in Ollama c'è un modello "gemma"; l'app la mostra solo se /health
+# la annuncia) e la copia di sicurezza dei PDF esportati: POST /backup salva il PDF in una cartella del Mac
+# (backup_dir, una sottocartella per quaderno, le ultime backup_keep copie). Bridge vecchi: l'app non prova nemmeno.
 #
 # Regole: solo testo dentro e solo testo fuori. Nessun comando del Mac parte da ciò che arriva dall'iPad:
 # Ollama si chiama via HTTP, `claude` si avvia con argomenti fissi in lista (niente shell), senza strumenti,
@@ -40,7 +45,7 @@ import time
 import unicodedata
 import urllib.parse
 
-VERSION = '3'
+VERSION = '4'
 HOST = '127.0.0.1'  # fisso: dall'esterno si passa solo da Tailscale Serve
 HOME = os.environ.get('STUDIO_BRIDGE_HOME') or os.path.join(os.path.expanduser('~'), '.studio-bridge')
 
@@ -50,6 +55,12 @@ DEFAULTS = {
     'ollama_url': 'http://127.0.0.1:11434',
     'qwen_model': '',          # vuoto = il primo modello di Ollama che contiene "qwen"
     'qwen_num_ctx': 16384,     # contesto di Ollama (il suo predefinito è piccolo e taglierebbe i testi lunghi)
+    'gemma_model': '',         # vuoto = il primo modello di Ollama che contiene "gemma" (niente embedding)
+    'gemma_num_ctx': 65536,    # uguale a quello del modello in Ollama, così non lo ricarica con un contesto diverso
+    'ollama_guard': '',        # facoltativo: comando lanciato come «COMANDO posto MODELLO» prima di Gemma (fa posto in memoria)
+    'backup_dir': '~/PDF-Penna',  # copie di sicurezza dei PDF esportati dall'app; vuoto = spento
+    'backup_max_mb': 300,      # PDF più grandi non si copiano
+    'backup_keep': 20,         # copie tenute per ogni quaderno (le più vecchie si cancellano)
     'claude_bin': '',          # vuoto = cerca `claude` nel PATH e nei posti soliti
     'claude_models': ['sonnet', 'opus'],
     'claude_default': 'sonnet',
@@ -122,6 +133,7 @@ EMPTY_DIR = os.path.join(HOME, 'vuota')  # cartella vuota: `claude` parte da qui
 
 MSG_OLLAMA_DOWN = 'Ollama non risponde sul Mac Studio: apri l’app Ollama (o scrivi «ollama serve» nel Terminale).'
 MSG_NO_QWEN = 'In Ollama non c’è un modello Qwen: sul Mac Studio scrivi nel Terminale «ollama pull qwen3».'
+MSG_NO_GEMMA = 'In Ollama non c’è un modello Gemma: sul Mac Studio scrivi nel Terminale «ollama pull gemma3».'
 MSG_NO_CLAUDE = 'Sul Mac Studio non trovo il comando «claude» (Claude Code): installalo e fai il login con il tuo abbonamento.'
 MSG_OLD_CLAUDE = 'Il comando «claude» sul Mac Studio è troppo vecchio: aggiornalo scrivendo nel Terminale «claude update».'
 MSG_LOGIN = 'Claude non è collegato all’abbonamento sul Mac Studio: apri il Terminale, scrivi «claude» e fai il login.'
@@ -677,8 +689,8 @@ def ollama_conn(timeout):
     return cls(host, port, timeout=timeout)
 
 
-def qwen_status():
-    """{'ok', 'models', 'default', 'error'}: modelli installati in Ollama (quelli con "qwen" per primi)."""
+def ollama_names():
+    """Modelli installati in Ollama (senza quelli di embedding), o None se Ollama non risponde."""
     try:
         c = ollama_conn(3)
         c.request('GET', '/api/tags')
@@ -686,15 +698,89 @@ def qwen_status():
         data = json.loads(r.read().decode('utf-8') or '{}')
         c.close()
     except Exception:
-        return {'ok': False, 'models': [], 'default': '', 'error': MSG_OLLAMA_DOWN}
+        return None
     names = [m.get('name') or m.get('model') or '' for m in data.get('models') or []]
-    names = [n for n in names if n and 'embed' not in n.lower()]
+    return [n for n in names if n and 'embed' not in n.lower()]
+
+
+def gemma_status(names=None):
+    """{'ok', 'models', 'default', 'error'}: i modelli "gemma" di Ollama, per la sorgente Gemma."""
+    names = ollama_names() if names is None else names
+    if names is None:
+        return {'ok': False, 'models': [], 'default': '', 'error': MSG_OLLAMA_DOWN}
+    gem = [n for n in names if 'gemma' in n.lower()]
+    want = CFG['gemma_model']
+    if want in gem:
+        gem = [want]  # scelto nella configurazione: solo quello (un altro Gemma sarebbe un secondo modello in memoria)
+    default = gem[0] if gem else ''
+    return {'ok': bool(default), 'models': gem, 'default': default, 'error': '' if default else MSG_NO_GEMMA}
+
+
+def qwen_status(names=None):
+    """{'ok', 'models', 'default', 'error'}: modelli installati in Ollama (quelli con "qwen" per primi; i Gemma hanno la
+    loro sorgente, con il loro contesto)."""
+    names = ollama_names() if names is None else names
+    if names is None:
+        return {'ok': False, 'models': [], 'default': '', 'error': MSG_OLLAMA_DOWN}
+    names = [n for n in names if 'gemma' not in n.lower()]
     names.sort(key=lambda n: 0 if 'qwen' in n.lower() else 1)
     want = CFG['qwen_model']
     default = want if want in names else next((n for n in names if 'qwen' in n.lower()), '')
     if want and want not in names:
         default = next((n for n in names if 'qwen' in n.lower()), '')
     return {'ok': bool(default), 'models': names, 'default': default, 'error': '' if default else MSG_NO_QWEN}
+
+
+def make_room(model):
+    """Prima di Gemma: «ollama_guard posto MODELLO» (es. ollama-custode), così Ollama non sceglie da solo chi scaricare.
+    Facoltativo; se manca o fallisce si va avanti lo stesso."""
+    cmd = os.path.expanduser(CFG['ollama_guard'] or '')
+    if not cmd or not os.path.isfile(cmd) or not os.access(cmd, os.X_OK):
+        return
+    try:
+        subprocess.run([cmd, 'posto', model], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=40)
+    except Exception as e:
+        log('ollama_guard: ' + type(e).__name__)
+
+
+# ---------------------------------------------------------------- copia di sicurezza dei PDF (POST /backup)
+BACKUP_NAME_RE = re.compile(r"[^\w\s\-.,()'’&+]+")
+BACKUP_LOCK = threading.Lock()
+
+
+def backup_dir():
+    """La cartella delle copie (creata se manca), o '' se spenta o non scrivibile."""
+    d = CFG['backup_dir'].strip()
+    if not d:
+        return ''
+    d = os.path.realpath(os.path.expanduser(d))
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+    except OSError:
+        return ''
+    return d if os.access(d, os.W_OK) else ''
+
+
+def backup_name(raw):
+    """Nome del quaderno → nome di cartella sicuro (niente / \\ .. né caratteri di controllo)."""
+    s = unicodedata.normalize('NFC', raw or '')
+    s = CTRL_RE.sub('', s)
+    s = re.sub(r'\.pdf$', '', s.strip(), flags=re.I)
+    s = BACKUP_NAME_RE.sub('_', s)
+    s = re.sub(r'\s+', ' ', s).strip(' .')[:100].strip(' .')
+    return s or 'quaderno'
+
+
+def backup_prune(folder, keep):
+    try:
+        files = sorted(f for f in os.listdir(folder) if f.endswith('.pdf') and not f.startswith('.'))
+    except OSError:
+        return
+    for f in files[:-keep] if keep > 0 else []:
+        try:
+            os.remove(os.path.join(folder, f))
+        except OSError:
+            pass
 
 
 class ThinkFilter:
@@ -737,9 +823,10 @@ class ThinkFilter:
         return s
 
 
-class QwenJob:
-    def __init__(self, model, system, messages, web=None):
+class QwenJob:  # anche per Gemma: stesso Ollama, con il suo contesto e il suo nome nei messaggi
+    def __init__(self, model, system, messages, web=None, num_ctx=None, label='Qwen'):
         self.model, self.system, self.messages = model, system, messages
+        self.num_ctx, self.label = num_ctx or CFG['qwen_num_ctx'], label
         self.web = web  # None, oppure {'key', 'ctx', 'queries'}: prima si sceglie cosa cercare e si cerca con Tavily
         self.conn = None
         self.cancelled = False
@@ -747,7 +834,7 @@ class QwenJob:
     def plan(self, prompt):
         """Qwen propone le ricerche (JSON, senza streaming). None se non risponde bene in tempo."""
         body = {'model': self.model, 'stream': False, 'format': 'json', 'think': False,
-                'options': {'num_ctx': CFG['qwen_num_ctx'], 'temperature': 0.2},  # stesso contesto: Ollama non ricarica il modello
+                'options': {'num_ctx': self.num_ctx, 'temperature': 0.2},  # stesso contesto: Ollama non ricarica il modello
                 'messages': [{'role': 'system', 'content': PLAN_RULES}, {'role': 'user', 'content': prompt}]}
         for _ in range(2):
             try:
@@ -836,7 +923,7 @@ class QwenJob:
             queries, found = got
             messages = messages[:-1] + [{'role': 'user', 'content': messages[-1]['content'] + web_block(queries, found)}]
             system = (system + '\n\n' if system else '') + WEB_RULES_QWEN
-        body = {'model': self.model, 'stream': True, 'options': {'num_ctx': CFG['qwen_num_ctx']},
+        body = {'model': self.model, 'stream': True, 'options': {'num_ctx': self.num_ctx},
                 'messages': ([{'role': 'system', 'content': system}] if system else []) + messages}
         try:
             self.conn = ollama_conn(CFG['first_byte_timeout'])
@@ -848,7 +935,7 @@ class QwenJob:
                     msg = json.loads(raw).get('error') or raw
                 except ValueError:
                     msg = raw
-                q.put(('error', 'Qwen: ' + str(msg)[:300]))
+                q.put(('error', self.label + ': ' + str(msg)[:300]))
                 return
             filt = ThinkFilter()
             while True:
@@ -860,7 +947,7 @@ class QwenJob:
                     continue
                 d = json.loads(line.decode('utf-8'))
                 if d.get('error'):
-                    q.put(('error', 'Qwen: ' + str(d['error'])[:300]))
+                    q.put(('error', self.label + ': ' + str(d['error'])[:300]))
                     return
                 m = d.get('message') or {}
                 if m.get('thinking'):
@@ -878,7 +965,7 @@ class QwenJob:
                     q.put(('done', None))
                     return
             if not self.cancelled:
-                q.put(('error', 'Qwen ha interrotto la risposta a metà. Riprova.'))
+                q.put(('error', self.label + ' ha interrotto la risposta a metà. Riprova.'))
         except socket.timeout:
             if not self.cancelled:
                 q.put(('error', MSG_SLOW))
@@ -887,7 +974,7 @@ class QwenJob:
                 q.put(('error', MSG_OLLAMA_DOWN + ' (' + type(e).__name__ + ')'))
         except Exception as e:  # risposta strana di Ollama
             if not self.cancelled:
-                q.put(('error', 'Qwen: risposta non valida (' + type(e).__name__ + ').'))
+                q.put(('error', self.label + ': risposta non valida (' + type(e).__name__ + ').'))
         finally:
             self.close()
 
@@ -1266,8 +1353,8 @@ def validate(body):
     if not isinstance(body, dict):
         raise BadRequest('Richiesta non valida.')
     provider = body.get('provider')
-    if provider not in ('qwen', 'claude'):
-        raise BadRequest('Sorgente sconosciuta: scegli Qwen o Claude.')
+    if provider not in ('qwen', 'gemma', 'claude'):
+        raise BadRequest('Sorgente sconosciuta: scegli Qwen, Gemma o Claude.')
     system = body.get('system') or ''
     if not isinstance(system, str) or len(system) > MAX_SYSTEM or '\x00' in system:
         raise BadRequest('Istruzioni di sistema non valide.')
@@ -1289,7 +1376,7 @@ def validate(body):
         if not CLAUDE_MODEL_RE.match(model) or (model not in CFG['claude_models'] and not model.startswith('claude-')):
             raise BadRequest('Modello Claude non valido: ' + model[:40])
     elif model and not QWEN_MODEL_RE.match(model):
-        raise BadRequest('Modello Qwen non valido.')
+        raise BadRequest('Modello %s non valido.' % ('Gemma' if provider == 'gemma' else 'Qwen'))
     web = body.get('web', False)
     if not isinstance(web, bool):
         raise BadRequest('Opzione «Cerca sul web» non valida.')
@@ -1391,16 +1478,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         qs = urllib.parse.parse_qs(self.path.split('?', 1)[1] if '?' in self.path else '')
         info = claude_info(force='fresh' in qs)
         has_key = bool(tavily_key())  # si dice solo se c'è, mai la chiave
+        names = ollama_names()
+        web_ollama = {'ok': has_key, 'key': 'ok' if has_key else 'manca', 'error': '' if has_key else 'manca la chiave Tavily sul Mac Studio'}
+        bdir = backup_dir()
         self.send_json(200, {
             'ok': True, 'version': VERSION,
-            'qwen': dict(qwen_status(), num_ctx=CFG['qwen_num_ctx']),  # l'app sceglie quanto testo mandare
+            'qwen': dict(qwen_status(names), num_ctx=CFG['qwen_num_ctx']),  # l'app sceglie quanto testo mandare
+            'gemma': dict(gemma_status(names), num_ctx=CFG['gemma_num_ctx']),  # l'app mostra Gemma solo se ok
+            'web_gemma': web_ollama,
+            'backup': {'ok': bool(bdir), 'max_mb': CFG['backup_max_mb']},  # dove salva non si dice
             'claude': {'ok': info['ok'], 'models': CFG['claude_models'], 'default': CFG['claude_default'], 'plan': info['plan'], 'error': info['error']},
             'web_claude': {'ok': info['ok'] and info['web'], 'error': '' if info['ok'] and info['web'] else info['error'] or MSG_OLD_CLAUDE_WEB},
-            'web_qwen': {'ok': has_key, 'key': 'ok' if has_key else 'manca', 'error': '' if has_key else 'manca la chiave Tavily sul Mac Studio'},
+            'web_qwen': web_ollama,
         })
 
     def do_POST(self):
-        if self.path != '/ask':
+        path = self.path.split('?', 1)[0]
+        if path == '/backup':
+            if self.guard():
+                self.backup()
+            return
+        if path != '/ask':
             self.send_json(404, {'error': 'Indirizzo sconosciuto.'})
             return
         if not self.guard():
@@ -1436,8 +1534,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         t0 = time.time()
         try:
-            if provider == 'qwen':
-                st = qwen_status()
+            if provider in ('qwen', 'gemma'):
+                st = qwen_status() if provider == 'qwen' else gemma_status()
                 if not st['ok']:
                     self.send_json(503, {'error': st['error']})
                     return
@@ -1449,7 +1547,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if web and not key:
                     self.send_json(503, {'error': MSG_NO_TAVILY})
                     return
-                job = QwenJob(model, system, messages, dict(wopt, key=key) if web else None)
+                if provider == 'gemma':
+                    make_room(model)
+                job = QwenJob(model, system, messages, dict(wopt, key=key) if web else None,
+                              num_ctx=CFG[provider + '_num_ctx'], label='Gemma' if provider == 'gemma' else 'Qwen')
             else:
                 info = claude_info()
                 if not info['ok']:
@@ -1463,6 +1564,77 @@ class Handler(http.server.BaseHTTPRequestHandler):
             log('ask %s %s%s %d caratteri -> %s in %.1fs' % (provider, model, ' +web' if web else '', sum(len(m['content']) for m in messages), result, time.time() - t0))
         finally:
             SEM.release()
+
+    # --- copia di sicurezza: POST /backup?name=<nome del quaderno>, corpo = il PDF. Salva in backup_dir/<nome>/<data ora>.pdf
+    def backup(self):
+        bdir = backup_dir()
+        if not bdir:
+            self.send_json(503, {'error': 'Copia sul Mac spenta o cartella non scrivibile.'})
+            return
+        qs = urllib.parse.parse_qs(self.path.split('?', 1)[1] if '?' in self.path else '')
+        name = backup_name((qs.get('name') or [''])[0][:300])
+        try:
+            n = int(self.headers.get('Content-Length') or '-1')
+        except ValueError:
+            n = -1
+        limit = CFG['backup_max_mb'] * 1048576
+        if n < 5 or n > limit:
+            self.close_connection = True
+            self.send_json(413 if n > limit else 400, {'error': 'PDF troppo grande (al massimo %d MB).' % CFG['backup_max_mb'] if n > limit else 'PDF mancante.'})
+            return
+        folder = os.path.join(bdir, name)
+        if os.path.dirname(os.path.realpath(folder)) != bdir:
+            self.send_json(400, {'error': 'Nome non valido.'})
+            return
+        try:
+            os.makedirs(folder, mode=0o700, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix='.arrivo-', suffix='.pdf', dir=folder)
+        except OSError as e:
+            self.send_json(500, {'error': 'Non riesco a scrivere sul Mac (' + type(e).__name__ + ').'})
+            return
+        t0, left, ok = time.time(), n, False
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                first = True
+                while left > 0:
+                    chunk = self.rfile.read(min(1048576, left))
+                    if not chunk:
+                        break
+                    if first and not chunk.startswith(b'%PDF-'):
+                        break
+                    first = False
+                    f.write(chunk)
+                    left -= len(chunk)
+            ok = left == 0
+            if ok:
+                with BACKUP_LOCK:
+                    final = os.path.join(folder, time.strftime('%Y-%m-%d %H.%M.%S') + '.pdf')
+                    k = 2
+                    while os.path.exists(final):
+                        final = os.path.join(folder, time.strftime('%Y-%m-%d %H.%M.%S') + ' (%d).pdf' % k)
+                        k += 1
+                    os.replace(tmp, final)
+                    os.chmod(final, 0o600)
+                    backup_prune(folder, CFG['backup_keep'])
+        except (OSError, socket.timeout) as e:
+            ok = False
+            log('backup: ' + type(e).__name__)
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+        if not ok:
+            try:
+                os.rmdir(folder)  # solo se è rimasta vuota
+            except OSError:
+                pass
+            self.close_connection = True
+            self.send_json(400, {'error': 'Il PDF non è arrivato intero (o non è un PDF).'})
+            return
+        log('backup %d KB in %.1fs' % (n // 1024, time.time() - t0))
+        self.send_json(200, {'ok': True, 'file': name + '/' + os.path.basename(final), 'bytes': n})
 
     # --- risposta in streaming (Server-Sent Events): meta, (status | queries | search | sources | thinking | text)…, done | error.
     # Un "ping" ogni 15 s tiene viva la linea.

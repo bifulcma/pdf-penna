@@ -257,7 +257,7 @@
     <div class="group-title">Assistente</div>
     <div id="ai-box" class="set-box">
       <div class="row-status"><span class="sync-chip" id="ai-chip" data-state="off"><i class="sync-dot"></i><span id="ai-state">Mac Studio non collegato</span></span></div>
-      <p class="set-help">Spiegazioni, riassunti e domande sul testo dei PDF, dal tuo Mac Studio: <b>Qwen</b> (gratis, gira sul Mac) o <b>Claude</b> (con il tuo abbonamento).</p>
+      <p class="set-help">Spiegazioni, riassunti e domande sul testo dei PDF, dal tuo Mac Studio: <b>Qwen</b> (gratis, gira sul Mac), <b>Gemma</b> (gratis, se è installata sul Mac) o <b>Claude</b> (con il tuo abbonamento). I PDF esportati si copiano anche sul Mac, se il bridge è aggiornato.</p>
       <label class="fld"><span>Indirizzo del Mac Studio</span><input id="ai-url" type="url" inputmode="url" placeholder="https://nome.xxxx.ts.net" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next"></label>
       <label class="fld"><span>Token</span><input id="ai-token" type="password" placeholder="Incolla il token" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done"></label>
       <p id="ai-err" class="fld-err" role="alert" hidden></p>
@@ -294,6 +294,7 @@
     <h3 id="ask-title"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg><span>Chiedi</span></h3>
     <div class="ask-src" role="radiogroup" aria-label="Chi risponde">
       <button type="button" role="radio" data-src="qwen"><b>Qwen</b><small>gratis</small></button>
+      <button type="button" role="radio" data-src="gemma" hidden><b>Gemma</b><small>italiano</small></button>
       <button type="button" role="radio" data-src="claude"><b>Claude</b><small>abbonamento</small></button>
     </div>
     <button id="ask-close" class="ib soft" type="button" aria-label="Chiudi"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></button>
