@@ -5,7 +5,7 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v15';
+const APP_VERSION = 'v16';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -1728,7 +1728,6 @@ const askEl = $('ask'), askAns = $('ask-answer');
 const gemmaOk = () => !!(aiCfg.health && aiCfg.health.gemma && aiCfg.health.gemma.ok);
 // Argon (agy di Antigravity sui libri) c'è solo se il bridge lo annuncia (bridge del 31/10)
 const argonOk = () => !!(aiCfg.health && aiCfg.health.argon && aiCfg.health.argon.ok);
-const PRIVACY_ARGON = 'Argon è l’agente di Antigravity sul Mac Studio: legge tutti i tuoi libri Argon per rispondere, ma non li modifica. Lavora con i modelli Gemini di Google: la domanda e il testo del PDF passano da Google. Va bene per i libri, mai per documenti di banca o di salute.';
 const askSt = { scope: 'page', sel: null, src: aiCfg.src === 'claude' ? 'claude' : aiCfg.src === 'gemma' && gemmaOk() ? 'gemma' : aiCfg.src === 'argon' && argonOk() ? 'argon' : 'qwen', ctrl: null, busy: false, stopped: false, last: null, answer: '', error: '', info: '', ctxInfo: '', model: '', thinking: false, saved: null,
   found: [], numbered: false, searching: '', webOld: false,
   queries: [], qPlanned: false, qFound: -1, qPoor: false, qedit: false, // ricerche fatte dal Mac (fase 9) e "Modifica ricerca"
@@ -2100,11 +2099,6 @@ async function askRun(what, opts = {}) {
     const ok = await modal({ title: 'Prima di inviare', text: PRIVACY, options: [{ label: 'Ho capito, invia', value: 'ok', accent: true }] });
     if (!ok) return;
     aiCfg.privacy = 1; saveAi();
-  }
-  if (askSt.src === 'argon' && !aiCfg.argonPrivacy) {
-    const ok = await modal({ title: 'Argon passa da Google', text: PRIVACY_ARGON, options: [{ label: 'Ho capito, chiedi ad Argon', value: 'ok', accent: true }] });
-    if (!ok) return;
-    aiCfg.argonPrivacy = 1; saveAi();
   }
   // opts.queries = ricerche corrette a mano ("Modifica ricerca"): si cerca sul web con quelle, così come sono
   const src = askSt.src, model = aiCfg.model[src] || '', queries = opts.queries && opts.queries.length ? opts.queries : null, act = what.action ? A.actionById(what.action) : null, web = src !== 'argon' && (!!queries || !!aiCfg.web || !!(act && act.web && aiCfg.webPrivacy)); // Argon non cerca sul web // «Verifica» cerca sul web se l'hai già autorizzato una volta
