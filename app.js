@@ -5,7 +5,7 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v16';
+const APP_VERSION = 'v17';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -1728,6 +1728,8 @@ const askEl = $('ask'), askAns = $('ask-answer');
 const gemmaOk = () => !!(aiCfg.health && aiCfg.health.gemma && aiCfg.health.gemma.ok);
 // Argon (agy di Antigravity sui libri) c'è solo se il bridge lo annuncia (bridge del 31/10)
 const argonOk = () => !!(aiCfg.health && aiCfg.health.argon && aiCfg.health.argon.ok);
+const argonWeb = () => !!(aiCfg.health && aiCfg.health.argon && aiCfg.health.argon.fonte === 'web'); // bridge del 01/11: Argon cerca sul web
+const argonLong = () => 'Studio · Argon (' + (argonWeb() ? 'cerca sul web' : 'legge tutti i libri') + ')';
 const askSt = { scope: 'page', sel: null, src: aiCfg.src === 'claude' ? 'claude' : aiCfg.src === 'gemma' && gemmaOk() ? 'gemma' : aiCfg.src === 'argon' && argonOk() ? 'argon' : 'qwen', ctrl: null, busy: false, stopped: false, last: null, answer: '', error: '', info: '', ctxInfo: '', model: '', thinking: false, saved: null,
   found: [], numbered: false, searching: '', webOld: false,
   queries: [], qPlanned: false, qFound: -1, qPoor: false, qedit: false, // ricerche fatte dal Mac (fase 9) e "Modifica ricerca"
@@ -1782,7 +1784,8 @@ function paintAsk() {
     if (b.dataset.src === 'argon') b.hidden = !argonOk() && !on;
     b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on));
     b.classList.toggle('off', !!(h && !h.ok));
-    b.title = h && !h.ok ? h.error : A.SOURCES[b.dataset.src].long;
+    b.title = h && !h.ok ? h.error : b.dataset.src === 'argon' ? argonLong() : A.SOURCES[b.dataset.src].long;
+    if (b.dataset.src === 'argon') { const sm = b.querySelector('small'); if (sm) sm.textContent = argonWeb() ? 'il web' : 'i libri'; }
   });
   if (!ready) return;
   const cur = curIndex() + 1;
@@ -1820,7 +1823,7 @@ function paintAskWeb() {
   note.classList.toggle('warn', on && (old || plain || !!(wh && !wh.ok)));
   note.textContent = !on ? 'Spento: solo il testo del PDF'
     : old ? 'Aggiorna il Mac Studio (rilancia l’installazione), poi Prova connessione'
-      : askSt.src === 'argon' ? 'Argon lavora sui libri, non sul web: per cercare usa Claude'
+      : askSt.src === 'argon' ? (argonWeb() ? 'Argon cerca sempre sul web (Gemini Flash) e cita le fonti' : 'Argon lavora sui libri, non sul web: per cercare usa Claude')
       : wh && !wh.ok ? (askSt.src !== 'claude' ? A.SOURCES[askSt.src].label + ': manca la chiave Tavily sullo Studio, usa Claude' : 'Claude: ' + (wh.error || 'non può cercare'))
         : plain ? 'Ricerche poco mirate: aggiorna il Mac Studio (rilancia l’installazione)'
           : askSt.src === 'claude' ? 'Claude cerca, legge le pagine e cita le fonti' : A.SOURCES[askSt.src].label + ' sceglie le ricerche, legge le fonti migliori (Tavily) e le cita';
@@ -2251,7 +2254,7 @@ function aiStatusLine(h) {
   for (const k of ['qwen', 'gemma', 'claude', 'argon']) {
     if ((k === 'gemma' || k === 'argon') && !(h[k] && h[k].ok)) continue; // Gemma e Argon si mostrano solo se ci sono
     const x = h[k] || {}, li = el('li');
-    li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', A.SOURCES[k].label + (x.ok ? (k === 'argon' ? ' · legge i libri · ' + x.default : k !== 'claude' ? ' · ' + x.default : ' · abbonamento' + (x.plan ? ' ' + x.plan : '')) : ' · ' + (x.error || 'non disponibile'))));
+    li.append(el('b', x.ok ? 'y' : 'n', x.ok ? '✓' : '✗'), el('span', '', A.SOURCES[k].label + (x.ok ? (k === 'argon' ? (x.fonte === 'web' ? ' · cerca sul web · ' : ' · legge i libri · ') + x.default : k !== 'claude' ? ' · ' + x.default : ' · abbonamento' + (x.plan ? ' ' + x.plan : '')) : ' · ' + (x.error || 'non disponibile'))));
     ul.append(li);
   }
   if (h.backup && h.backup.ok) { const li = el('li'); li.append(el('b', 'y', '✓'), el('span', '', 'Copia sul Mac · i PDF esportati (e salvati) si copiano anche sul Mac Studio')); ul.append(li); }
@@ -2280,7 +2283,8 @@ function paintAiSrc() {
   if (gemmaOk() && !has) { const o = el('option', '', A.SOURCES.gemma.long); o.value = 'gemma'; sel.insertBefore(o, sel.querySelector('option[value="claude"]')); }
   else if (!gemmaOk() && has && askSt.src !== 'gemma') has.remove();
   const hasA = sel.querySelector('option[value="argon"]');
-  if (argonOk() && !hasA) { const o = el('option', '', A.SOURCES.argon.long); o.value = 'argon'; sel.append(o); }
+  if (argonOk() && !hasA) { const o = el('option', '', argonLong()); o.value = 'argon'; sel.append(o); }
+  else if (hasA) hasA.textContent = argonLong();
   else if (!argonOk() && hasA && askSt.src !== 'argon') hasA.remove();
   sel.value = askSt.src;
 }
