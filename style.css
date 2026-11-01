@@ -187,7 +187,7 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
 .pillbar.sub { top: calc(var(--st) + 76px); left: 50%; transform: translateX(-50%); padding: 4px; animation: subin .18s var(--ease); }
 @keyframes subin { from { opacity: 0; transform: translate(-50%, -6px); } }
 .sep { width: 1px; height: 26px; background: var(--line); margin: 0 5px; flex: none; }
-.tool.active { background: var(--accent-soft); color: var(--accent); }
+.tool.active, #btn-finger.active { background: var(--accent-soft); color: var(--accent); }
 .tool.active:active { background: var(--accent-soft); }
 .tool .dot { position: absolute; left: 50%; bottom: 5px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; display: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, .12); }
 .tool[data-tool="pen"] .dot, .tool[data-tool="hl"] .dot { display: block; }
@@ -233,6 +233,7 @@ button:focus-visible, label:focus-within, .slider:focus-visible { outline: 2px s
 .page { position: relative; margin: 0 auto 22px; background: #fff; border-radius: 4px; box-shadow: var(--page-shadow); overflow: hidden; color: #2B2623; }
 .page canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
 .page canvas.draw { touch-action: pan-x pan-y; }
+body.finger .page canvas.draw { touch-action: pan-y; }
 .page.bm::before { content: ""; position: absolute; z-index: 4; top: 0; right: 4.5%; width: 22px; height: 36px; background: #C2664A; pointer-events: none;
   clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 74%, 0 100%); }
 .find-mark { position: absolute; z-index: 3; pointer-events: none; border-radius: 3px; background: rgba(255, 200, 0, .34); box-shadow: 0 0 0 2px rgba(194, 102, 74, .9);

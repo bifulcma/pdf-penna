@@ -5,7 +5,7 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v18';
+const APP_VERSION = 'v19';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -544,8 +544,9 @@ const PALETTE = {
   pen: [['#1a1a1a', 'Nero'], ['#5f6368', 'Grafite'], ['#1f5fd1', 'Blu'], ['#0f7b8a', 'Petrolio'], ['#2a9d4a', 'Verde'], ['#d62828', 'Rosso'], ['#C2664A', 'Terracotta'], ['#7b3fb0', 'Viola']],
   hl: [['#f5c400', 'Giallo'], ['#7fd35b', 'Verde'], ['#4fc3f7', 'Azzurro'], ['#ff7eb6', 'Rosa'], ['#ff9f43', 'Arancio'], ['#b388ff', 'Lilla'], ['#ff5252', 'Rosso'], ['#a0a0a0', 'Grigio']],
 };
-const S = { tool: 'pen', pen: { color: '#1a1a1a', size: 3 }, hl: { color: '#f5c400', size: 3, alpha: HL_ALPHA } };
+const S = { finger: false, tool: 'pen', pen: { color: '#1a1a1a', size: 3 }, hl: { color: '#f5c400', size: 3, alpha: HL_ALPHA } };
 try { const saved = JSON.parse(localStorage.getItem('penna.tools') || 'null'); if (saved) { Object.assign(S.pen, saved.pen); Object.assign(S.hl, saved.hl); } } catch {}
+try { S.finger = localStorage.getItem('penna.finger') === '1'; } catch {}
 const saveTools = () => { try { localStorage.setItem('penna.tools', JSON.stringify({ pen: S.pen, hl: S.hl })); } catch {} };
 const cfg = () => S[S.tool === 'hl' || S.tool === 'select' ? 'hl' : 'pen'];
 const nb = { node: null, pages: [], zoom: 1, undo: [], redo: [], drawing: 0 };
@@ -2635,9 +2636,10 @@ function factor(e) {
 }
 function attachDrawing(p) {
   const c = p.draw;
-  let cur = null, erased = null, pid = null;
+  let cur = null, erased = null, pid = null, straight = false;
   const norm = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]; };
-  const allowed = (e) => e.pointerType === 'pen' || e.pointerType === 'mouse';
+  // Dito (se attivato): disegna solo righe dritte con penna/evidenziatore; lo scorrimento verticale resta al browser
+  const allowed = (e) => e.pointerType === 'pen' || e.pointerType === 'mouse' || (e.pointerType === 'touch' && S.finger && (S.tool === 'pen' || S.tool === 'hl'));
   // Apple Pencil: blocco lo scorrimento e Scribble mentre si scrive sulla pagina
   c.addEventListener('touchstart', (e) => {
     for (const t of e.changedTouches) if (t.touchType === 'stylus') { e.preventDefault(); return; }
@@ -2657,6 +2659,7 @@ function attachDrawing(p) {
     ensureDraw(p);
     const o = cfg();
     cur = { t: S.tool, c: o.color, w: o.size * widthFactor(S.tool), pts: [[x, y, factor(e)]] };
+    straight = e.pointerType === 'touch';
     if (S.tool === 'hl') cur.a = o.alpha;
     redrawPage(p, cur);
   });
@@ -2671,11 +2674,12 @@ function attachDrawing(p) {
       if (!cur) continue;
       const last = cur.pts[cur.pts.length - 1];
       if (Math.abs(last[0] - x) * p.cw < 0.4 && Math.abs(last[1] - y) * p.ch < 0.4) continue;
+      if (straight) { cur.pts = [cur.pts[0], [x, cur.pts[0][1], 1]]; continue; }
       const pt = [x, y, factor(ev)];
       cur.pts.push(pt);
       if (cur.t === 'pen' && c.width) drawSegment(c.getContext('2d'), cur, last, pt, c.width, c.height);
     }
-    if (cur && cur.t === 'hl') redrawPage(p, cur);
+    if (cur && (cur.t === 'hl' || straight)) redrawPage(p, cur);
   });
   const finish = (e) => {
     if (e.pointerId !== pid) return;
@@ -2689,6 +2693,7 @@ function attachDrawing(p) {
     if (!cur) return;
     const s = cur; cur = null;
     if (e.type === 'pointercancel') { redrawPage(p); return; }
+    if (straight && (s.pts.length < 2 || Math.abs(s.pts[1][0] - s.pts[0][0]) * p.cw < 12)) { redrawPage(p); return; } // tocco o gesto troppo corto
     p.rec.strokes.push(s);
     pushAction({ type: 'add', pid: p.rec.id, stroke: s });
     redrawPage(p);
@@ -2945,6 +2950,17 @@ function makeSlider(id, get, set) {
 makeSlider('sl-size', () => (cfg().size - 1) / 9, (f) => { cfg().size = Math.round(1 + f * 9); });
 makeSlider('sl-alpha', () => (S.hl.alpha - 0.1) / 0.8, (f) => { S.hl.alpha = Math.round((0.1 + f * 0.8) * 20) / 20; });
 
+function paintFinger() {
+  const b = $('btn-finger');
+  b.classList.toggle('active', S.finger); b.setAttribute('aria-pressed', S.finger ? 'true' : 'false');
+  document.body.classList.toggle('finger', S.finger);
+}
+$('btn-finger').onclick = () => {
+  S.finger = !S.finger; try { localStorage.setItem('penna.finger', S.finger ? '1' : '0'); } catch {}
+  if (S.finger && S.tool !== 'pen' && S.tool !== 'hl') setTool('pen');
+  paintFinger();
+};
+paintFinger();
 function setTool(t) {
   const was = S.tool;
   S.tool = t;
