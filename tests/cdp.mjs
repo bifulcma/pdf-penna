@@ -2,13 +2,13 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 export const OUT = process.env.OUT || '/tmp/penna-out';
 fs.mkdirSync(OUT, { recursive: true });
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function launch(port) {
   const dir = fs.mkdtempSync(OUT + '/prof-');
   const proc = spawn(CHROME, ['--headless=new', '--remote-debugging-port=' + port, '--user-data-dir=' + dir,
-    '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--window-size=1024,768', '--allow-file-access-from-files', 'about:blank'], { stdio: 'ignore' });
+    '--no-first-run', '--no-default-browser-check', '--use-mock-keychain', '--password-store=basic', '--disable-gpu', '--window-size=1024,768', '--allow-file-access-from-files', 'about:blank'], { stdio: 'ignore' });
   for (let i = 0; i < 100; i++) {
     try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); if (r.ok) break; } catch {}
     await sleep(100);
