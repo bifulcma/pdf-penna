@@ -41,7 +41,7 @@ try {
   await A.goto(URL_APP);
   await A.waitFor('document.getElementById("btn-new-nb")');
   await sleep(500);
-  ok('Avvio senza Client ID: OneDrive disattivato', await A.eval('return document.getElementById("btn-onedrive").disabled && /Client ID/.test(document.getElementById("sync-help").textContent)'));
+  ok('Avvio senza bridge: OneDrive nascosto e invito a collegare il Mac Studio (v18)', await A.eval('return document.getElementById("btn-onedrive").hidden && /Mac Studio/.test(document.getElementById("sync-help").textContent)'));
   await click(A, '#btn-new-nb'); await sleep(200);
   await A.eval('const i=document.getElementById("dlg-input"); i.value="Quaderno Prova"; return 1');
   await modalClickOpt(A, 'Righe');
