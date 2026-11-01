@@ -45,7 +45,7 @@ import time
 import unicodedata
 import urllib.parse
 
-VERSION = '4'
+VERSION = '5'
 HOST = '127.0.0.1'  # fisso: dall'esterno si passa solo da Tailscale Serve
 HOME = os.environ.get('STUDIO_BRIDGE_HOME') or os.path.join(os.path.expanduser('~'), '.studio-bridge')
 
@@ -88,6 +88,9 @@ DEFAULTS = {
     # 01/11: Argon cerca sul WEB (search_web di Antigravity) invece che nei libri. «libri» = come prima.
     # In «web» lavora in una cartella vuota: agy non legge file fuori dalla sua cartella (provato), quindi niente del Mac va a Google.
     'argon_fonte': 'web',
+    # 01/11: sincronizzazione dei quaderni tra più iPad attraverso il Mac (stessi comandi di OneDrive che l'app sa già usare).
+    'sync_dir': '~/.gemini/antigravity/scratch/argon/_penna_sync',
+    'sync_max_mb': 300,
     'argon_web_dir': '~/.studio-bridge/argon-web',
 }
 
@@ -1384,6 +1387,44 @@ class ClaudeJob:
         kill_tree(self.proc)
 
 
+# ---------------------------------------------------------------- Sincronizzazione tra iPad (01/11/2026)
+# L'app parla con OneDrive (Microsoft Graph) attraverso pochi indirizzi; qui il bridge risponde agli stessi, salvando nella
+# cartella sync_dir del Mac. Ogni iPad manda le sue modifiche e prende le altre; per ogni pagina vince l'ultima modifica
+# (lo decide l'app). La «versione» (eTag) di un file è dimensione + data di modifica: con If-Match un iPad non può
+# sovrascrivere un file che l'altro ha cambiato nel frattempo (risponde 412 e l'app riprova al giro dopo).
+SYNC_ROOT = '/sync/me/drive/special/approot'
+SYNC_NAME_RE = re.compile(r'^[npb]-[A-Za-z0-9_-]{1,80}\.(json|pdf|jpg|png|bin)$')
+SYNC_LOCK = threading.Lock()
+
+
+def sync_dir():
+    d = os.path.realpath(os.path.expanduser(CFG.get('sync_dir') or ''))
+    if not CFG.get('sync_dir'):
+        return ''
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        return d if os.access(d, os.W_OK) else ''
+    except OSError:
+        return ''
+
+
+def sync_etag(path):
+    st = os.stat(path)
+    return '"%d-%d"' % (st.st_size, st.st_mtime_ns)
+
+
+def sync_target(path):
+    """'/sync/…/approot:/<nome>:/content' -> percorso del file, oppure None."""
+    pre, suf = SYNC_ROOT + ':/', ':/content'
+    if not (path.startswith(pre) and path.endswith(suf)):
+        return None
+    name = urllib.parse.unquote(path[len(pre):-len(suf)])
+    d = sync_dir()
+    if not d or not SYNC_NAME_RE.match(name):
+        return None
+    return os.path.join(d, name)
+
+
 # ---------------------------------------------------------------- Argon (agy di Antigravity, sola lettura sui libri)
 ARGON_RULES = ('Sei Argon, l’assistente dei libri di Marco Bifulco. Lavori nella cartella dei libri Argon '
                '(monografie, Il Freno e la Fiamma, capitoli, fonti): puoi leggerla e cercarci dentro, ma NON modifichi '
@@ -1674,8 +1715,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         self.send_response(204)
         self.cors()
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type, If-Match')
         self.send_header('Access-Control-Max-Age', '600')
         if self.headers.get('Access-Control-Request-Private-Network') == 'true':
             self.send_header('Access-Control-Allow-Private-Network', 'true')
@@ -1691,6 +1732,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-Length', str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+            return
+        if path.startswith('/sync/'):
+            if self.guard():
+                self.sync_get(path)
             return
         if path != '/health':
             self.send_json(404, {'error': 'Indirizzo sconosciuto.'})
@@ -1714,7 +1759,90 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'web_qwen': web_ollama,
             'argon': argon_status(),  # l'app mostra Argon solo se ok
             'web_argon': {'ok': argon_web(), 'error': '' if argon_web() else 'Argon lavora sui libri, non sul web'},
+            'sync': {'ok': bool(sync_dir()), 'max_mb': CFG['sync_max_mb']},  # dove salva non si dice
         })
+
+    # ---------- sincronizzazione tra iPad ----------
+    def sync_get(self, path):
+        if path == SYNC_ROOT + '/children':
+            d = sync_dir()
+            if not d:
+                self.send_json(503, {'error': 'Sincronizzazione spenta o cartella non scrivibile sul Mac.'})
+                return
+            voci = []
+            with SYNC_LOCK:
+                for n in sorted(os.listdir(d)):
+                    f = os.path.join(d, n)
+                    if SYNC_NAME_RE.match(n) and os.path.isfile(f):
+                        voci.append({'name': n, 'eTag': sync_etag(f), 'size': os.path.getsize(f)})
+            self.send_json(200, {'value': voci})
+            return
+        f = sync_target(path)
+        if not f or not os.path.isfile(f):
+            self.send_json(404, {'error': 'File non trovato.'})
+            return
+        with SYNC_LOCK:
+            with open(f, 'rb') as fh:
+                data = fh.read()
+            et = sync_etag(f)
+        self.send_response(200)
+        self.cors()
+        self.send_header('Content-Type', 'application/json' if f.endswith('.json') else 'application/octet-stream')
+        self.send_header('ETag', et)
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_PUT(self):
+        path = self.path.split('?', 1)[0]
+        if not path.startswith('/sync/'):
+            self.send_json(404, {'error': 'Indirizzo sconosciuto.'})
+            return
+        if not self.guard():
+            return
+        f = sync_target(path)
+        if not f:
+            self.send_json(400, {'error': 'Nome non valido o sincronizzazione spenta.'})
+            return
+        try:
+            n = int(self.headers.get('Content-Length') or '-1')
+        except ValueError:
+            n = -1
+        limit = CFG['sync_max_mb'] * 1048576
+        if n < 0 or n > limit:
+            self.close_connection = True
+            self.send_json(413 if n > limit else 411, {'error': 'File troppo grande (al massimo %d MB).' % CFG['sync_max_mb'] if n > limit else 'Richiesta senza lunghezza.'})
+            return
+        fd, tmp = tempfile.mkstemp(prefix='.arrivo-', dir=os.path.dirname(f))
+        left = n
+        try:
+            with os.fdopen(fd, 'wb') as fh:
+                while left > 0:
+                    chunk = self.rfile.read(min(1048576, left))
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    left -= len(chunk)
+            if left:
+                raise OSError('arrivo incompleto')
+            want = self.headers.get('If-Match')
+            with SYNC_LOCK:
+                if want and os.path.isfile(f) and sync_etag(f) != want:
+                    os.unlink(tmp)
+                    self.send_json(412, {'error': 'Il file è cambiato nel frattempo.'})
+                    return
+                os.replace(tmp, f)
+                os.chmod(f, 0o600)
+                et = sync_etag(f)
+            self.send_json(200, {'name': os.path.basename(f), 'eTag': et, 'size': n})
+        except (OSError, socket.timeout) as e:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            self.close_connection = True
+            self.send_json(500, {'error': 'Non riesco a salvare sul Mac (' + type(e).__name__ + ').'})
 
     def do_POST(self):
         path = self.path.split('?', 1)[0]

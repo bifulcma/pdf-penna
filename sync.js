@@ -7,7 +7,8 @@ let GRAPH = 'https://graph.microsoft.com/v1.0';
 const MIME = { pdf: 'application/pdf', jpg: 'image/jpeg', png: 'image/png' };
 const EXT = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' };
 
-export const status = { state: 'off', msg: '', last: 0, account: '' };
+export const status = { state: 'off', msg: '', last: 0, account: '', where: 'OneDrive' };
+let maxSingle = 3.5 * 1024 * 1024;
 const listeners = new Set(), dataListeners = new Set();
 export const hooks = { flush: async () => {} };
 export const onStatus = (f) => listeners.add(f);
@@ -27,11 +28,20 @@ export const isConfigured = () => {
 export const isConnected = () => !!getToken;
 
 // Per i test: token finto e server Graph finto
-export function useCustom({ token, base }) {
+export function useCustom({ token, base, where, single }) {
   getToken = async () => token;
   if (base) GRAPH = base;
+  if (where) status.where = where;
+  if (single) maxSingle = single;  // il Mac Studio accetta il file intero: niente caricamento a pezzi
   setStatus('idle');
   requestSync(0);
+}
+// 01/11: sincronizzazione attraverso il Mac Studio (bridge), stessi indirizzi di OneDrive
+export const isMac = () => status.where === 'Mac Studio' && !!getToken;
+export function stop() {
+  clearTimeout(timer);
+  getToken = null; status.where = 'OneDrive'; maxSingle = 3.5 * 1024 * 1024;
+  setStatus('off');
 }
 
 export async function init() {
@@ -90,7 +100,7 @@ async function listRemote() {
   while (url) {
     const res = await gfetch(url);
     if (res.status === 404) return map;
-    if (!res.ok) throw new Error('Elenco OneDrive: ' + res.status);
+    if (!res.ok) throw new Error('Elenco ' + status.where + ': ' + res.status);
     const j = await res.json();
     for (const it of j.value || []) if (it.name) map.set(it.name, { etag: it.eTag });
     url = j['@odata.nextLink'];
@@ -107,7 +117,7 @@ async function upload(name, body, ifMatch) {
   const headers = {};
   if (ifMatch) headers['If-Match'] = ifMatch;
   const size = body.byteLength ?? body.length;
-  if (size <= 3.5 * 1024 * 1024) {
+  if (size <= maxSingle) {
     const res = await gfetch(itemUrl(name, '/content'), { method: 'PUT', body, headers });
     if (res.status === 412) return null;
     if (!res.ok) throw new Error('Upload ' + name + ': ' + res.status);

@@ -5,7 +5,7 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v17';
+const APP_VERSION = 'v18';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -437,7 +437,7 @@ async function nodeMenu(n, nodes) {
     const q = await modal({ title: 'Sposta “' + n.name + '” in…', options: [{ label: 'I miei quaderni (principale)', value: '', icon: 'book' }, ...folders.map((f) => ({ label: f.name, value: f.id, icon: 'folder' }))] });
     if (q) { n.parent = q.value || null; await D.saveNode(n); Sync.requestSync(); refreshLibrary(); }
   } else if (r.value === 'del') {
-    if (await confirmDlg('Eliminare “' + n.name + '”?', n.kind === 'folder' ? 'Verrà eliminato anche tutto quello che contiene.' : 'Il quaderno e le sue pagine verranno eliminati (anche da OneDrive).')) {
+    if (await confirmDlg('Eliminare “' + n.name + '”?', n.kind === 'folder' ? 'Verrà eliminato anche tutto quello che contiene.' : 'Il quaderno e le sue pagine verranno eliminati (anche dal Mac Studio e dagli altri iPad).')) {
       await D.deleteNode(n); Sync.requestSync(); refreshLibrary();
     }
   }
@@ -716,7 +716,7 @@ async function renderPage(p) {
     freeCanvas(off);
     p.rendered = false;
     if (e && /RenderingCancelled/.test(e.name || '')) return;
-    if (e && e.name === 'NoData') { p.wrap.dataset.msg = 'Il PDF arriva da OneDrive…'; p.wrap.classList.add('err'); return; }
+    if (e && e.name === 'NoData') { p.wrap.dataset.msg = 'Il PDF arriva dal Mac Studio…'; p.wrap.classList.add('err'); return; }
     p.wrap.dataset.msg = 'Questa pagina non si riesce a mostrare'; p.wrap.classList.add('err');
     showError('Pagina ' + (nb.pages.indexOf(p) + 1) + ' non visualizzata', e);
   }
@@ -1052,7 +1052,7 @@ async function runFind(raw) {
   }
   for (const id of touched) { const m = textMem.get(id); const arr = []; m.forEach((s, k) => { arr[k] = s; }); D.setMeta('tx:' + id, arr).catch(() => {}); }
   setFindStatus(hits ? plural(hits, 'risultato', 'risultati') + ' in ' + plural(hitPages, 'pagina', 'pagine') + (hits > shown ? ' · mostro i primi ' + shown : '')
-    : 'Nessun risultato per “' + raw.trim() + '”.' + (missing ? ' (Alcune pagine non sono ancora arrivate da OneDrive.)' : ' Se il PDF è una scansione (foto delle pagine) non contiene testo da cercare.'));
+    : 'Nessun risultato per “' + raw.trim() + '”.' + (missing ? ' (Alcune pagine non sono ancora arrivate dal Mac Studio.)' : ' Se il PDF è una scansione (foto delle pagine) non contiene testo da cercare.'));
 }
 function addFindHit(list, id, i, str, a, b) {
   const li = el('li'), btn = el('button', 'row-go fhit'); btn.type = 'button';
@@ -1721,6 +1721,13 @@ const aiCfg = (() => { try { return JSON.parse(localStorage.getItem(AI_KEY)) || 
 aiCfg.model = aiCfg.model || {};
 const saveAi = () => { try { localStorage.setItem(AI_KEY, JSON.stringify(aiCfg)); } catch {} };
 const aiReady = () => !!(aiCfg.url && aiCfg.token);
+// 01/11: i quaderni si sincronizzano tra gli iPad attraverso il Mac Studio (niente OneDrive). Serve il bridge v5.
+function startMacSync() {
+  const ok = aiReady() && aiCfg.health && aiCfg.health.sync && aiCfg.health.sync.ok;
+  if (ok && !Sync.isMac()) Sync.useCustom({ token: aiCfg.token, base: aiCfg.url + '/sync', where: 'Mac Studio', single: (aiCfg.health.sync.max_mb || 300) * 1048576 });
+  else if (!ok && Sync.isMac()) Sync.stop();
+  renderSync();
+}
 const PRIVACY = 'Il testo selezionato viene inviato al tuo Mac Studio (e, se scegli Claude, a Anthropic con il tuo abbonamento). Non parte niente finché non tocchi un’azione o Invia.';
 const PRIVACY_WEB = 'Con «Cerca sul web» la tua domanda e alcuni pezzi del testo possono uscire dal Mac Studio verso internet: con Claude li usa Anthropic per cercare e leggere pagine; con Qwen la ricerca va a Tavily (un servizio di ricerca). Le pagine trovate sono trattate come dati, non come ordini. Puoi spegnerlo quando vuoi.';
 const askEl = $('ask'), askAns = $('ask-answer');
@@ -2057,13 +2064,14 @@ async function refreshHealthQuiet() {
 }
 function storeHealth(j) {
   aiCfg.health = { at: Date.now(), version: String(j.version || ''), qwen: j.qwen, claude: j.claude, web_claude: j.web_claude || null, web_qwen: j.web_qwen || null,
-    gemma: j.gemma || null, web_gemma: j.web_gemma || null, argon: j.argon || null, backup: j.backup || null };
+    gemma: j.gemma || null, web_gemma: j.web_gemma || null, argon: j.argon || null, backup: j.backup || null, sync: j.sync || null };
   // la sorgente scelta non c'è (più) sul Mac: passo alla prima che c'è
   if (!(j[askSt.src] && j[askSt.src].ok) && !askSt.busy) {
     const alt = ['qwen', 'gemma', 'claude', 'argon'].find((k) => j[k] && j[k].ok);
     if (alt) { askSt.src = alt; aiCfg.src = alt; }
   }
   saveAi();
+  setTimeout(startMacSync, 0);
 }
 
 // ---------- Copia di sicurezza dei PDF sul Mac (bridge versione 4) ----------
@@ -2344,7 +2352,7 @@ $('ai-token').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.pr
 $('btn-ai-forget').onclick = async () => {
   $('settings').close();
   if (!(await confirmDlg('Scollegare il Mac Studio?', 'Tolgo indirizzo e token da questo dispositivo. Sul Mac Studio non cambia niente.', 'Scollega'))) { openSettings(); return; }
-  delete aiCfg.url; delete aiCfg.token; aiCfg.health = null; saveAi();
+  delete aiCfg.url; delete aiCfg.token; aiCfg.health = null; saveAi(); startMacSync();
   if (!askEl.hidden) paintAsk();
   openSettings();
 };
@@ -2793,9 +2801,10 @@ async function saveNow() {
   const msg = 'Salvato ✓ alle ' + hhmm(saveSt.at);
   if (macCopyOk()) setTimeout(macCopyAfterSave, 1500); // copia di sicurezza sul Mac, in sottofondo
   if (!Sync.isConnected()) { toast(msg); return; }
-  toast(msg + ' · invio a OneDrive…', 0);
+  const W = Sync.status.where;
+  toast(msg + ' · invio al ' + W + '…', 0);
   const res = await syncAndWait(20000);
-  toast(msg + ({ idle: ' · copiato su OneDrive', offline: ' · sei offline: lo invio a OneDrive appena torna la rete', error: ' · OneDrive: ' + Sync.status.msg }[res] || ' · invio a OneDrive in corso'), 4500);
+  toast(msg + ({ idle: ' · copiato sul ' + W, offline: ' · sei offline: lo invio al ' + W + ' appena torna la rete', error: ' · ' + W + ': ' + Sync.status.msg }[res] || ' · invio al ' + W + ' in corso'), 4500);
 }
 function syncAndWait(ms) {
   return new Promise((resolve) => {
@@ -2811,7 +2820,7 @@ $('btn-save').onclick = saveNow;
 $('btn-save-menu').onclick = async () => {
   const conn = Sync.isConnected();
   const r = await modal({ title: 'Salva ed esporta',
-    text: (saveSt.dirty ? 'Ci sono modifiche non ancora salvate.' : saveSt.at ? 'Salvato alle ' + hhmm(saveSt.at) + '.' : 'È tutto salvato.') + ' Le modifiche si salvano anche da sole mentre scrivi' + (conn ? ' e vanno su OneDrive.' : '.'),
+    text: (saveSt.dirty ? 'Ci sono modifiche non ancora salvate.' : saveSt.at ? 'Salvato alle ' + hhmm(saveSt.at) + '.' : 'È tutto salvato.') + ' Le modifiche si salvano anche da sole mentre scrivi' + (conn ? ' e vanno sul ' + Sync.status.where + '.' : '.'),
     options: [{ label: 'Salva ora', value: 'save', icon: 'save' }, { label: 'Esporta PDF con annotazioni', value: 'export', icon: 'share' }, { label: 'Salva una copia del quaderno', value: 'copy', icon: 'dup' }] });
   if (!r) return;
   if (r.value === 'save') saveNow(); else if (r.value === 'export') exportPdf(); else copyNotebook();
@@ -3030,27 +3039,20 @@ async function exportPdf() {
 
 // ---------- Stato della sincronizzazione e impostazioni ----------
 function renderSync() {
-  const st = Sync.status, conf = Sync.isConfigured(), conn = Sync.isConnected();
+  const st = Sync.status, conn = Sync.isConnected(), mac = aiReady();
   const time = st.last ? new Date(st.last).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : '';
-  const label = {
-    off: conf ? 'OneDrive non collegato' : 'Solo su questo dispositivo',
-    idle: 'Sincronizzato' + (time ? ' · ' + time : ''),
-    syncing: 'Sincronizzazione in corso…',
-    offline: 'Offline · si sincronizza quando torna la rete',
-    error: 'Errore: ' + st.msg,
-  }[st.state];
-  const short = { off: conf ? 'OneDrive non collegato' : 'Solo su questo dispositivo', idle: 'Sincronizzato con OneDrive', syncing: 'Sincronizzo…', offline: 'Offline', error: 'Errore di sincronizzazione' }[st.state];
+  const off = !mac ? 'Solo su questo dispositivo' : 'Il Mac Studio non sincronizza ancora (aggiorna il bridge)';
+  const label = { off, idle: 'Sincronizzato con il Mac Studio' + (time ? ' · ' + time : ''), syncing: 'Sincronizzazione in corso…',
+    offline: 'Offline · si sincronizza quando torna la rete', error: 'Errore: ' + st.msg }[st.state];
+  const short = { off: 'Solo su questo dispositivo', idle: 'Sincronizzato con il Mac', syncing: 'Sincronizzo…', offline: 'Offline', error: 'Errore di sincronizzazione' }[st.state];
   $('sync-text').textContent = label;
   $('sync-short').textContent = short;
   document.querySelectorAll('.sync-chip').forEach((c) => { c.dataset.state = st.state; });
-  $('btn-sync').hidden = !conn; $('btn-signout').hidden = !conn;
-  $('btn-onedrive').hidden = conn && !(st.state === 'error' && /riaccedere/.test(st.msg));
-  $('btn-onedrive').querySelector('span').textContent = conn ? 'Accedi di nuovo' : 'Collega OneDrive';
-  $('btn-onedrive').disabled = !conf;
+  $('btn-sync').hidden = !conn; $('btn-signout').hidden = true; $('btn-onedrive').hidden = true;
   $('btn-sync').disabled = st.state === 'syncing';
-  $('sync-help').textContent = conf ? (conn && st.account ? 'Account: ' + st.account : 'Collega il tuo account Microsoft per avere i quaderni anche sugli altri dispositivi.')
-    : 'Per collegare OneDrive serve il codice dell’app (Client ID) nel file config.js. Finché non c’è, i quaderni restano solo su questo dispositivo.';
-  $('sync-about').textContent = conn ? ' e copiati su OneDrive' : '';
+  $('sync-help').textContent = conn ? 'Ogni iPad collegato allo stesso Mac Studio salva lì le modifiche e prende quelle degli altri, ogni minuto e quando riapri l’app. Per ogni pagina vince l’ultima modifica.'
+    : 'Collega il Mac Studio qui sotto (Assistente: indirizzo e token): i quaderni si sincronizzano tra tutti gli iPad collegati.';
+  $('sync-about').textContent = conn ? ' e copiati sul Mac Studio' : '';
 }
 Sync.onStatus(renderSync);
 $('app-ver').textContent = APP_VERSION;
@@ -3110,7 +3112,7 @@ async function resumeLast() {
     await resumeLast();
   } catch (e) { showError('Avvio', e); }
   renderSync();
-  await Sync.init();
+  startMacSync();
 })();
 
 // Appigli per i test automatici
