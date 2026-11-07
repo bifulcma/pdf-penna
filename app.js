@@ -5,7 +5,7 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 
-const APP_VERSION = 'v19';
+const APP_VERSION = 'v20';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -3110,6 +3110,14 @@ if ('serviceWorker' in navigator) {
   // nuova versione installata mentre l'app è aperta: lo dico, si aggiorna con un tocco
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) $('update-bar').hidden = false; });
   $('btn-update').onclick = async () => { await flush(); location.reload(); };
+  // iPhone/iPad (07/11/2026): l'icona riprende l'app dov'era e iOS non cerca aggiornamenti da solo.
+  // Al ritorno in primo piano (al massimo ogni 15 minuti) chiedo se c'è una versione nuova: se sì compare «Aggiorna».
+  let ultimoControllo = Date.now();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || Date.now() - ultimoControllo < 15 * 60 * 1000) return;
+    ultimoControllo = Date.now();
+    navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
+  });
 }
 // riapro il quaderno che era aperto (Safari su iPad chiude spesso le app in secondo piano)
 async function resumeLast() {
