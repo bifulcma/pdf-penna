@@ -24,6 +24,7 @@ ${Array.from({ length: 9 }, (_, i) => `<p>Paragrafo ${n}.${i + 1}. ${LOREM}</p>`
 const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1';
 process.env.UA = 'ipad';
 const P = await browser(9411, 'strip');
+await P.send('Network.setCacheDisabled', { cacheDisabled: true }); // sempre i file appena pubblicati
 const q = (expr) => P.eval('return ' + expr);
 // grandezza apparente del corpo del testo (11 pt) in px CSS sullo schermo, e dove cadono inizio/fine riga
 const measure = () => P.eval(`const p=__penna.nb.pages[__penna.curIndex()], r=p.wrap.getBoundingClientRect(), W=p.pg?p.pg.view[2]-p.pg.view[0]:595.92, k=p.cw/W;
