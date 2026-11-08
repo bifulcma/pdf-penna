@@ -64,6 +64,11 @@ export function drawAnns(doc, page, anns) {
     const fix = a.k === 'del' || a.k === 'sub';
     const [r, g, b] = hexToRgb(fix ? STRIKE : a.c || '#f5c400');
     for (const q of a.r || []) {
+      if (a.k === 'ul') { // Sottolinea: linea colorata appena sotto le lettere
+        const y = q.t + q.h * 0.86, p1 = toPdf(q.l, y, w, h, rot), p2 = toPdf(q.l + q.w, y, w, h, rot);
+        page.drawLine({ start: { x: p1[0], y: p1[1] }, end: { x: p2[0], y: p2[1] }, thickness: Math.max(0.8, q.h * dispH * 0.08), color: rgb(r, g, b), lineCap: LineCapStyle.Round });
+        continue;
+      }
       if (fix) {
         const y = q.t + q.h * STRIKE_Y, p1 = toPdf(q.l, y, w, h, rot), p2 = toPdf(q.l + q.w, y, w, h, rot);
         page.drawLine({ start: { x: p1[0], y: p1[1] }, end: { x: p2[0], y: p2[1] }, thickness: Math.max(0.8, q.h * dispH * 0.09), color: rgb(r, g, b), lineCap: LineCapStyle.Round });

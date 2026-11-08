@@ -1,6 +1,6 @@
 // La versione della cache cambia a ogni aggiornamento dell'app. Il nuovo service worker si installa e prende
 // subito il controllo; l'app aperta mostra "È pronta una nuova versione · Aggiorna" (niente ricariche a sorpresa).
-const VERSION = 'v21'; // rev. 2 (8/11): la lettura «Aa» parte da 20 px — cambiare questo file fa riscaricare tutto
+const VERSION = 'v22'; // brief 12 (8/11): evidenziare parti piccole sul telefono — cambiare questo file fa riscaricare tutto
 const CACHE = 'pdf-penna-' + VERSION;
 const SHELL = [
   './', 'index.html', 'app.js', 'db.js', 'sync.js', 'pdfexport.js', 'find.js', 'notes.js', 'ask.js', 'reader.js', 'config.js', 'polyfills.js', 'pdfworker.js', 'style.css', 'manifest.webmanifest',

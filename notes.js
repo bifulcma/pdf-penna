@@ -1,6 +1,6 @@
 // Evidenziazioni e commenti sul testo del PDF: solo funzioni pure (facili da provare), usate da app.js.
 // annotazione (nella pagina, campo anns): { id, q: testo citato, c: colore, a: opacità, r: [{l,t,w,h}] in frazioni della pagina mostrata,
-//   n?: commento, k?: 'del' (Barra: da cancellare) | 'sub' (Modifica: da sostituire con s), s?: testo nuovo, t: creata, u: modificata }
+//   n?: commento, k?: 'del' (Barra: da cancellare) | 'sub' (Modifica: da sostituire con s) | 'ul' (Sottolinea, v22), s?: testo nuovo, t: creata, u: modificata }
 // Barra e Modifica sono segni da correttore di bozze: il PDF non cambia, le istruzioni vanno a Claude col Markdown.
 // Senza k è un'evidenziazione o un commento come prima (i dati vecchi restano uguali).
 
@@ -43,8 +43,8 @@ export function sortAnns(list) {
 
 export const STRIKE = '#d93025'; // rosso dei segni da correttore (una versione vecchia dell'app li mostra come evidenziazione rossa)
 export const isFix = (a) => !!a && (a.k === 'del' || a.k === 'sub');
-export const annKind = (a) => (a.k === 'del' ? 'del' : a.k === 'sub' ? 'sub' : a.n ? 'note' : 'hl');
-export const KIND_LABEL = { del: 'Da cancellare', sub: 'Da sostituire', note: 'Commento', hl: 'Evidenziazione' };
+export const annKind = (a) => (a.k === 'del' ? 'del' : a.k === 'sub' ? 'sub' : a.n ? 'note' : a.k === 'ul' ? 'ul' : 'hl');
+export const KIND_LABEL = { del: 'Da cancellare', sub: 'Da sostituire', note: 'Commento', hl: 'Evidenziazione', ul: 'Sottolineatura' };
 // Barra ↔ Modifica: stesso testo e stessi riquadri, cambia solo l'istruzione. Testo nuovo vuoto = da cancellare.
 export function withFix(a, text) {
   const v = JSON.parse(JSON.stringify(a)), t = String(text ?? '').trim();

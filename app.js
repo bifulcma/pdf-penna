@@ -6,7 +6,7 @@ import * as N from './notes.js';
 import * as A from './ask.js';
 import * as R from './reader.js';
 
-const APP_VERSION = 'v21';
+const APP_VERSION = 'v22';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -561,8 +561,8 @@ async function openNotebook(id, focusPageId) {
   if (!node || node.deleted) return;
   if (nb.node) { await flush(); saveLastPage(); }
   nb.node = node; nb.zoom = 1; nb.undo = []; nb.redo = []; updateUndoButtons();
-  nb.crop = null; closeReader(false);
-  if (phone()) { nb.crop = savedCrop(id); nb.zoom = savedZoom(id); }
+  nb.crop = null; closeReader(false); geoMem.clear();
+  if (phone()) { nb.crop = savedCrop(id); nb.zoom = savedZoom(id); setTool('hand'); } // telefono: si apre per leggere (un dito scorre)
   closePop(); resetFind(); endSel(); nb.scanToast = false;
   saveSt.dirty = false; saveSt.at = 0; paintSave();
   library.hidden = true; notebook.hidden = false;
@@ -1344,7 +1344,9 @@ function pagePart(p, range) {
 }
 function readSelection() {
   const sel = document.getSelection();
-  if (!sel || !sel.rangeCount || sel.isCollapsed || S.tool !== 'select' || notebook.hidden) return null;
+  if (!sel || !sel.rangeCount || sel.isCollapsed || notebook.hidden) return null;
+  if (rd.open) { const range = sel.getRangeAt(0); return range.intersectsNode(rdBody) ? readerSelection(range) : null; } // lettura «Aa»
+  if (S.tool !== 'select') return null;
   const range = sel.getRangeAt(0), parts = [];
   for (const p of tlPages) if (p.tl && p.tl.end && range.intersectsNode(p.tl.div)) { const part = pagePart(p, range); if (part) parts.push(part); }
   if (!parts.length) return null;
@@ -1352,6 +1354,7 @@ function readSelection() {
   return { parts, text: parts.map((x) => x.quote).join('\n\n') };
 }
 function showSelMenu() {
+  if (phone()) { selMenu.hidden = true; showBar('sel'); return; } // telefono: barra in basso (sopra c'è il menu di iOS)
   selMenu.querySelector('.hdot').style.background = S.hl.color;
   selMenu.hidden = false;
   placeSelMenu();
@@ -1367,12 +1370,12 @@ function fitSelMenu() {
   if (selMenu.offsetWidth > max) selMenu.classList.add('compact');
   if (selMenu.offsetWidth > max) selMenu.classList.add('wrap');
 }
-function hideSelMenu() { selMenu.hidden = true; }
+function hideSelMenu() { selMenu.hidden = true; if (bar.mode === 'sel') hideBar(); }
 // fine della selezione: dopo un'azione, cambiando strumento o quaderno
 function endSel() {
   selSnap = null; hideSelMenu(); clearTimeout(selTimer);
   const sel = document.getSelection();
-  if (sel && sel.rangeCount && inTextLayer(sel.anchorNode)) sel.removeAllRanges();
+  if (sel && sel.rangeCount && (inTextLayer(sel.anchorNode) || rdBody.contains(sel.anchorNode))) sel.removeAllRanges();
 }
 // il menu sta sotto il testo scelto (sopra di solito c'è il menu di iOS); se sotto non c'è posto, sopra
 function placeSelMenu() {
@@ -1409,23 +1412,23 @@ function updateSel() {
   selSnap = s; showSelMenu();
 }
 document.addEventListener('selectionchange', () => {
-  if (notebook.hidden || S.tool !== 'select') return;
+  if (notebook.hidden || (S.tool !== 'select' && !rd.open)) return;
   fixSelectionEnd();
   clearTimeout(selTimer);
   selTimer = setTimeout(updateSel, 140);
 });
 selMenu.addEventListener('pointerdown', (e) => { menuDown = Date.now(); if (e.pointerType === 'mouse') e.preventDefault(); });
 selMenu.querySelectorAll('button').forEach((b) => { b.onclick = () => selAction(b.dataset.act); });
-function selAction(act) {
-  const s = selSnap;
+// o.c: colore scelto (barra del telefono)
+function selAction(act, s = selSnap, o = {}) {
   if (!s) return;
-  if (act === 'ask') { openAsk(true); return; }
+  if (act === 'ask') { selSnap = s; openAsk(true); return; }
   endSel();
   if (act === 'copy') { copyText(s.text, 'Copiato'); return; }
-  if (act === 'hl') {
-    const ch = s.parts.map((part) => { const a = newAnn(part); return { p: part.p, id: a.id, after: a }; });
+  if (act === 'hl' || act === 'ul') {
+    const ul = act === 'ul', ch = s.parts.map((part) => { const a = newAnn(part, '', ul ? { k: 'ul', c: o.c || UL_COLOR } : { c: o.c }); return { p: part.p, id: a.id, after: a }; });
     commitAnns(ch);
-    toast(s.parts.length > 1 ? 'Evidenziato su ' + s.parts.length + ' pagine' : 'Evidenziato');
+    toast((ul ? 'Sottolineato' : 'Evidenziato') + (s.parts.length > 1 ? ' su ' + s.parts.length + ' pagine' : rd.open ? ' (anche sulla pagina)' : ''));
     return;
   }
   if (act === 'strike') {
@@ -1460,17 +1463,73 @@ viewer.addEventListener('copy', (e) => {
   e.clipboardData.setData('text/plain', s.text); e.preventDefault();
 });
 // tocco su un testo evidenziato (con lo strumento Seleziona) = apri l'evidenziazione
+// telefono (v22): anche con «Mano» o l'evidenziatore; si apre la barretta Cambia colore / Togli
 viewer.addEventListener('click', (e) => {
-  if (S.tool !== 'select') return;
+  if (S.tool !== 'select' && !(phone() && S.tool !== 'text')) return;
   const sel = document.getSelection();
   if (sel && !sel.isCollapsed) return;
   const w = e.target.closest && e.target.closest('.page'), p = w && pageOf.get(w);
+  if (bar.mode === 'ann') hideBar();
   if (!p || !(p.rec.anns || []).length || e.target.closest('.ann-pin')) return;
   const R = w.getBoundingClientRect(), x = (e.clientX - R.left) / R.width, y = (e.clientY - R.top) / R.height;
   const a = p.rec.anns.find((q) => (q.r || []).some((r) => x >= r.l && x <= r.l + r.w && y >= r.t && y <= r.t + r.h));
-  if (a) annMenu(p, a.id);
+  if (a) { if (phone() && !N.isFix(a)) showBar('ann', p, a.id); else annMenu(p, a.id); }
 });
 
+// ---------- Telefono (v22): barra in basso sul testo scelto o su un'evidenziazione toccata ----------
+// mode 'sel': testo scelto (lettura «Aa» o strumento Seleziona) → Evidenzia (4 colori) · Sottolinea · Nota · Copia · Altro
+// mode 'ann': evidenziazione toccata → Cambia colore · Sottolinea/Evidenzia · Nota · Copia · Togli
+const hlBar = $('hlbar');
+const UL_COLOR = '#1f5fd1';
+const bar = { mode: null, p: null, id: null, snap: null };
+function showBar(mode, p = null, id = null) {
+  bar.mode = mode; bar.p = p; bar.id = id; bar.snap = mode === 'sel' ? selSnap : null;
+  const a = mode === 'ann' && (p.rec.anns || []).find((x) => x.id === id);
+  if (mode === 'ann' && !a) { hideBar(); return; }
+  hlBar.dataset.mode = mode;
+  $('hb-lbl').textContent = mode === 'ann' ? 'Colore' : 'Evidenzia';
+  hlBar.querySelectorAll('.hb-c').forEach((b) => b.classList.toggle('on', !!a && a.c.toLowerCase() === b.dataset.c));
+  const ul = hlBar.querySelector('[data-act="ul"]');
+  ul.querySelector('span').textContent = a && a.k === 'ul' ? 'Evidenzia' : 'Sottolinea';
+  ul.querySelector('use').setAttribute('href', a && a.k === 'ul' ? '#i-hl' : '#i-underline');
+  hlBar.hidden = false; document.body.classList.add('hlbar-on');
+}
+function hideBar() { bar.mode = null; bar.p = null; bar.id = null; bar.snap = null; hlBar.hidden = true; document.body.classList.remove('hlbar-on'); }
+hlBar.addEventListener('pointerdown', (e) => { menuDown = Date.now(); if (e.pointerType === 'mouse') e.preventDefault(); });
+hlBar.querySelectorAll('button').forEach((b) => { b.onclick = () => barAction(b.dataset.act || 'hl', b.dataset.c); });
+async function barAction(act, c) {
+  if (bar.mode === 'sel') {
+    const s = bar.snap || selSnap;
+    if (!s) { hideBar(); return; }
+    if (act === 'more') {
+      endSel();
+      const r = await modal({ title: 'Testo scelto', text: '«' + clip(s.text, 240) + '»', options: [
+        { label: 'Barra (da cancellare)', value: 'strike', icon: 'strike' },
+        { label: 'Modifica il testo', value: 'edit', icon: 'edit' },
+        { label: 'Copia con commento', value: 'copynote', icon: 'copy-note' },
+        { label: 'Chiedi', value: 'ask', icon: 'spark' }] });
+      if (r) selAction(r.value, s);
+      return;
+    }
+    selAction(act === 'note' ? 'note' : act, s, { c });
+    return;
+  }
+  if (bar.mode !== 'ann') return;
+  const { p, id } = bar, a = p && (p.rec.anns || []).find((x) => x.id === id);
+  hideBar();
+  if (!a) return;
+  const save = (v, msg) => { v.u = Date.now(); commitAnns([{ p, id, after: v }]); if (msg) toast(msg); };
+  if (act === 'hl') { const v = annCopy(a); v.c = c; save(v, 'Colore cambiato'); return; }
+  if (act === 'ul') { const v = annCopy(a); if (v.k === 'ul') { delete v.k; if (v.c === UL_COLOR) v.c = S.hl.color; save(v, 'Ora è evidenziato'); } else { v.k = 'ul'; save(v, 'Ora è sottolineato'); } return; }
+  if (act === 'copy') { copyText(a.q, 'Copiato'); return; }
+  if (act === 'del') { commitAnns([{ p, id, after: null }]); toast(a.k === 'ul' ? 'Sottolineatura tolta' : 'Evidenziazione tolta'); return; }
+  if (act === 'note') {
+    editNote({ p, quote: a.q, value: a.n || '', color: a.c, onSave: (txt) => {
+      const v = annCopy(a); if (txt) v.n = txt; else delete v.n;
+      save(v, txt ? 'Nota salvata' : 'Nota tolta');
+    } });
+  }
+}
 // Safari: trascinando la maniglia nello spazio tra le righe, la selezione salterebbe a fine pagina. È il rimedio
 // del lettore di pdf.js: il blocco "fine contenuto" segue il punto che si sta spostando.
 let prevRange = null, pointerIsDown = false;
@@ -1531,9 +1590,11 @@ function copyText(s, msg = 'Copiato') {
 
 // ---------- Evidenziazioni e commenti (salvati nella pagina: seguono riordino, copia, export e OneDrive) ----------
 const annCopy = (a) => (a ? JSON.parse(JSON.stringify(a)) : null);
-function newAnn(part, note) {
+// o.c = colore scelto nella barra del telefono; o.k = 'ul' (Sottolinea: linea sotto le parole, una versione vecchia dell'app la mostra evidenziata)
+function newAnn(part, note, o = {}) {
   const now = Date.now();
-  const a = { id: D.uid(), q: part.quote, c: S.hl.color, a: Math.max(0.2, Math.min(0.6, S.hl.alpha)), r: snapRects(part), t: now, u: now };
+  const a = { id: D.uid(), q: part.quote, c: o.c || S.hl.color, a: Math.max(0.2, Math.min(0.6, S.hl.alpha)), r: snapRects(part), t: now, u: now };
+  if (o.k) a.k = o.k;
   if (note) a.n = note;
   return a;
 }
@@ -1564,9 +1625,10 @@ function renderAnns(p) {
   for (const a of list) {
     const fix = N.isFix(a), rs = a.r || [];
     for (const r of rs) {
-      const i = el('i', fix ? 'ann-r ann-x' : 'ann-r'); i.dataset.id = a.id;
+      const i = el('i', fix ? 'ann-r ann-x' : a.k === 'ul' ? 'ann-r ann-u' : 'ann-r'); i.dataset.id = a.id;
       i.style.left = r.l * 100 + '%'; i.style.top = r.t * 100 + '%'; i.style.width = r.w * 100 + '%'; i.style.height = r.h * 100 + '%';
-      if (!fix) { i.style.background = a.c; i.style.opacity = String(a.a ?? HL_ALPHA); }
+      if (a.k === 'ul') i.style.setProperty('--c', a.c);
+      else if (!fix) { i.style.background = a.c; i.style.opacity = String(a.a ?? HL_ALPHA); }
       p.anns.append(i);
     }
     if (a.k === 'sub' && rs.length) {
@@ -1600,7 +1662,7 @@ async function annMenu(p, id) {
   endSel();
   const i = nb.pages.indexOf(p);
   if (N.isFix(a)) { fixMenu(p, a, i); return; }
-  const r = await modal({ title: (a.n ? 'Commento' : 'Testo evidenziato') + ' · pagina ' + (i + 1), text: '«' + clip(a.q, 240) + '»' + (a.n ? '\n\n' + a.n : ''), options: [
+  const r = await modal({ title: (a.n ? 'Commento' : a.k === 'ul' ? 'Testo sottolineato' : 'Testo evidenziato') + ' · pagina ' + (i + 1), text: '«' + clip(a.q, 240) + '»' + (a.n ? '\n\n' + a.n : ''), options: [
     { label: a.n ? 'Modifica il commento' : 'Aggiungi un commento', value: 'edit', icon: 'comment' },
     { label: 'Copia per Claude Code', value: 'copy', icon: 'copy-note' },
     { label: a.n ? 'Elimina commento ed evidenziazione' : 'Togli l’evidenziazione', value: 'del', danger: true, icon: 'trash' }] });
@@ -1668,7 +1730,7 @@ function annEntries() {
 function renderAnnList() {
   const ul = $('ann-list'), info = $('ann-count');
   ul.textContent = ''; info.textContent = '';
-  const list = annEntries(), cnt = { note: 0, hl: 0, del: 0, sub: 0 };
+  const list = annEntries(), cnt = { note: 0, hl: 0, ul: 0, del: 0, sub: 0 };
   for (const e of list) cnt[N.annKind(e.a)]++;
   $('btn-notes').dataset.n = list.length ? String(list.length) : '';
   $('btn-md-copy').disabled = $('btn-md-share').disabled = !list.length;
@@ -1677,7 +1739,7 @@ function renderAnnList() {
       '. Per correggere il testo: ', el('b', '', 'Barra'), ' (da cancellare) o ', el('b', '', 'Modifica'), ' (da sostituire con un testo nuovo).');
     return;
   }
-  info.textContent = [cnt.note ? plural(cnt.note, 'commento', 'commenti') : '', cnt.hl ? plural(cnt.hl, 'evidenziazione', 'evidenziazioni') : '',
+  info.textContent = [cnt.note ? plural(cnt.note, 'commento', 'commenti') : '', cnt.hl ? plural(cnt.hl, 'evidenziazione', 'evidenziazioni') : '', cnt.ul ? plural(cnt.ul, 'sottolineatura', 'sottolineature') : '',
     cnt.del ? cnt.del + ' da cancellare' : '', cnt.sub ? cnt.sub + ' da sostituire' : ''].filter(Boolean).join(' · ');
   for (const e of list) {
     const li = el('li'), go = el('button', 'row-go ann-row'); go.type = 'button';
@@ -1685,6 +1747,7 @@ function renderAnnList() {
     const dot = el('i', 'adot'); dot.style.background = fix ? N.STRIKE : e.a.c;
     const head = el('b', '', 'Pagina ' + e.page);
     if (fix) head.append(el('span', 'kind', N.KIND_LABEL[k]));
+    else if (e.a.k === 'ul') head.append(el('span', 'kind ul', 'Sottolineato'));
     const tx = el('span', 'tx'); tx.append(head, el('span', fix ? 'q x' : 'q', '«' + e.a.q + '»'));
     if (k === 'sub') tx.append(el('span', 'nt sub', '→ «' + e.a.s + '»'));
     else if (e.a.n) tx.append(el('span', 'nt', e.a.n));
@@ -2546,10 +2609,11 @@ document.addEventListener('paste', (e) => {
 let pinch = null;
 viewer.addEventListener('touchstart', (e) => {
   if (e.touches.length === 2) {
+    if (liveCancel) liveCancel(); // telefono: il secondo dito toglie il tratto appena cominciato
     const [a, b] = e.touches;
     const rect = viewer.getBoundingClientRect();
     const cx = (a.clientX + b.clientX) / 2 - rect.left, cy = (a.clientY + b.clientY) / 2 - rect.top;
-    pinch = { d0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), z0: nb.zoom, ratio: 1, cx, cy,
+    pinch = { d0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), z0: nb.zoom, ratio: 1, cx, cy, mx: cx, my: cy,
       fx: viewer.scrollLeft + cx - pagesEl.offsetLeft, fy: viewer.scrollTop + cy - pagesEl.offsetTop };
     pagesEl.style.transformOrigin = pinch.fx + 'px ' + pinch.fy + 'px';
   }
@@ -2561,14 +2625,23 @@ viewer.addEventListener('touchmove', (e) => {
   const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
   const nz = Math.min(zMax(), Math.max(zMin(), pinch.z0 * d / pinch.d0));
   pinch.ratio = nz / pinch.z0;
-  pagesEl.style.transform = 'scale(' + pinch.ratio + ')';
+  if (phone()) { // telefono: due dita anche scorrono (la pagina segue il punto in mezzo alle dita)
+    const rect = viewer.getBoundingClientRect();
+    pinch.mx = (a.clientX + b.clientX) / 2 - rect.left; pinch.my = (a.clientY + b.clientY) / 2 - rect.top;
+    pagesEl.style.transform = 'translate(' + (pinch.mx - pinch.cx) + 'px, ' + (pinch.my - pinch.cy) + 'px) scale(' + pinch.ratio + ')';
+  } else pagesEl.style.transform = 'scale(' + pinch.ratio + ')';
 }, { passive: false });
 function endPinch() {
   if (!pinch) return;
-  const { ratio, fx, fy, cx, cy } = pinch;
+  const { ratio, fx, fy } = pinch, cx = pinch.mx, cy = pinch.my;
   pinch = null;
   pagesEl.style.transform = ''; pagesEl.style.transformOrigin = '0 0';
-  if (Math.abs(ratio - 1) < 0.01) return;
+  if (Math.abs(ratio - 1) < 0.01) { // solo scorrimento a due dita
+    if (Math.abs(fx - cx + pagesEl.offsetLeft - viewer.scrollLeft) > 0.5 || Math.abs(fy - cy + pagesEl.offsetTop - viewer.scrollTop) > 0.5) {
+      viewer.scrollLeft = fx - cx + pagesEl.offsetLeft; viewer.scrollTop = fy - cy + pagesEl.offsetTop;
+    }
+    return;
+  }
   nb.zoom = Math.min(zMax(), Math.max(zMin(), nb.zoom * ratio));
   layout();
   viewer.scrollLeft = fx * ratio - cx + pagesEl.offsetLeft;
@@ -2588,6 +2661,7 @@ window.addEventListener('resize', () => {
     const i = curIndex(), p = nb.pages[i], f = (viewer.scrollTop - (p.wrap.offsetTop - nb.gap)) / (p.ch || 1);
     const was = document.body.classList.contains('phone');
     paintPhone();
+    if (phone() !== was) setTool(phone() ? (S.tool === 'select' || S.tool === 'text' ? S.tool : 'hand') : S.tool === 'hand' ? 'pen' : S.tool); // «Mano» c'è solo sul telefono
     if (phone() !== was) { nb.zoom = phone() ? savedZoom(nb.node.id) : 1; nb.crop = phone() ? savedCrop(nb.node.id) : null; if (phone() && !nb.crop) ensureCrop(nb.node).then(() => { layout(); goToPage(i, f); alignText(); }); }
     layout(); goToPage(i, f); alignText();
   }, 120);
@@ -2662,7 +2736,7 @@ viewer.addEventListener('touchmove', (e) => { if (tapDown && e.touches.length ==
 viewer.addEventListener('touchend', (e) => {
   const d = tapDown; tapDown = null;
   if (!d || d.moved || e.touches.length || !phone() || nb.drawing || performance.now() - d.t > 350) { if (!d || d.moved) tap1 = null; return; }
-  if (S.tool === 'text' || S.tool === 'select' || (e.target.closest && e.target.closest('textarea, button, input, .ann-pin, .img'))) { tap1 = null; return; }
+  if (S.tool === 'text' || S.tool === 'select' || oneFinger() || (e.target.closest && e.target.closest('textarea, button, input, .ann-pin, .img'))) { tap1 = null; return; }
   const now = performance.now();
   if (tap1 && now - tap1.t < 330 && Math.hypot(d.x - tap1.x, d.y - tap1.y) < 36) {
     tap1 = null;
@@ -2744,27 +2818,36 @@ function attachDrawing(p) {
   let cur = null, erased = null, pid = null, straight = false;
   const norm = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]; };
   // Dito (se attivato): disegna solo righe dritte con penna/evidenziatore; lo scorrimento verticale resta al browser
-  const allowed = (e) => e.pointerType === 'pen' || e.pointerType === 'mouse' || (e.pointerType === 'touch' && S.finger && (S.tool === 'pen' || S.tool === 'hl'));
+  // telefono (v22): con penna/evidenziatore/gomma un dito scrive (due dita scorrono e ingrandiscono, vedi il pizzico)
+  const allowed = (e) => e.pointerType === 'pen' || e.pointerType === 'mouse' || (e.pointerType === 'touch' && (oneFinger() || (S.finger && (S.tool === 'pen' || S.tool === 'hl'))));
+  const cancel = () => { // secondo dito sulla pagina: il tratto appena cominciato sparisce, si scorre
+    if (pid === null) return;
+    try { c.releasePointerCapture(pid); } catch {}
+    pid = null; nb.drawing = 0; liveCancel = null;
+    if (S.tool === 'eraser') { if (erased && erased.length) { queueSave(p.rec); pushAction({ type: 'del', items: erased }); } erased = null; return; }
+    cur = null; redrawPage(p);
+  };
   // Apple Pencil: blocco lo scorrimento e Scribble mentre si scrive sulla pagina
   c.addEventListener('touchstart', (e) => {
     for (const t of e.changedTouches) if (t.touchType === 'stylus') { e.preventDefault(); return; }
   }, { passive: false });
   c.addEventListener('contextmenu', (e) => e.preventDefault());
   c.addEventListener('pointerdown', (e) => {
-    if (S.tool === 'text' || S.tool === 'select' || !allowed(e) || pid !== null) return;
+    if (pid !== null && e.pointerType === 'touch' && oneFinger()) { cancel(); return; }
+    if (S.tool === 'text' || S.tool === 'select' || S.tool === 'hand' || !allowed(e) || pid !== null) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
     if (!pop.hidden || !gotoEl.hidden) closePop();
     if (e.pointerType === 'pen') lastPen = performance.now();
     clearTimeout(scrubHide); scrub.classList.remove('show');
-    pid = e.pointerId; nb.drawing = 1;
+    pid = e.pointerId; nb.drawing = 1; liveCancel = cancel;
     try { c.setPointerCapture(pid); } catch {}
     const [x, y] = norm(e);
     if (S.tool === 'eraser') { erased = []; eraseAt(p, x, y, erased); return; }
     ensureDraw(p);
     const o = cfg();
     cur = { t: S.tool, c: o.color, w: o.size * widthFactor(S.tool), pts: [[x, y, factor(e)]] };
-    straight = e.pointerType === 'touch';
+    straight = e.pointerType === 'touch' && !oneFinger();
     if (S.tool === 'hl') cur.a = o.alpha;
     redrawPage(p, cur);
   });
@@ -2788,7 +2871,7 @@ function attachDrawing(p) {
   });
   const finish = (e) => {
     if (e.pointerId !== pid) return;
-    pid = null; nb.drawing = 0;
+    pid = null; nb.drawing = 0; liveCancel = null;
     if (e.pointerType === 'pen') lastPen = performance.now();
     try { c.releasePointerCapture(e.pointerId); } catch {}
     if (S.tool === 'eraser') {
@@ -2799,6 +2882,8 @@ function attachDrawing(p) {
     const s = cur; cur = null;
     if (e.type === 'pointercancel') { redrawPage(p); return; }
     if (straight && (s.pts.length < 2 || Math.abs(s.pts[1][0] - s.pts[0][0]) * p.cw < 12)) { redrawPage(p); return; } // tocco o gesto troppo corto
+    if (e.pointerType === 'touch' && oneFinger() && !s.pts.some((q) => Math.hypot((q[0] - s.pts[0][0]) * p.cw, (q[1] - s.pts[0][1]) * p.ch) > 8)) { redrawPage(p); return; } // tocco: niente puntino
+    if (s.t === 'hl' && phone() && p.rec.type === 'pdf') { smartHl(p, s); return; }
     p.rec.strokes.push(s);
     pushAction({ type: 'add', pid: p.rec.id, stroke: s });
     redrawPage(p);
@@ -2806,6 +2891,25 @@ function attachDrawing(p) {
   };
   c.addEventListener('pointerup', finish);
   c.addEventListener('pointercancel', finish);
+}
+// telefono (v22): l'evidenziatore passato sopra righe di testo diventa un'evidenziazione delle parole toccate
+// (come «Evidenzia» sul testo scelto); fuori dal testo resta il tratto libero
+let liveCancel = null;
+function keepStroke(p, s) { p.rec.strokes.push(s); pushAction({ type: 'add', pid: p.rec.id, stroke: s }); redrawPage(p); queueSave(p.rec); }
+async function smartHl(p, s) {
+  redrawPage(p, s); // si vede subito mentre cerco le parole
+  let hits = null, g = null;
+  try { g = await pageGeo(p); hits = g && g.rows.length ? R.strokeWords(g.rows, s.pts, p.aspect) : null; } catch {}
+  if (p.dead || nb.pages.indexOf(p) < 0) return;
+  if (!hits) { keepStroke(p, s); return; }
+  const rects = hits.map(({ row, a, b }) => { const r = g.rows[row]; return { l: r.cx[a][0], t: r.t, w: r.cx[b - 1][1] - r.cx[a][0], h: r.h }; });
+  const quote = N.cleanQuote(normText(hits.map(({ row, a, b }) => g.rows[row].str.slice(a, b)).join('\n')));
+  if (!quote) { keepStroke(p, s); return; }
+  const a = newAnn({ p, quote, rects: N.mergeRects(rects), ws: true, we: true }, '', { c: s.c });
+  a.a = s.a ?? a.a;
+  commitAnns([{ p, id: a.id, after: a }]);
+  redrawPage(p);
+  toast('Evidenziato: «' + clip(quote, 40) + '»', 1800);
 }
 function eraseAt(p, x, y, erased) {
   const list = p.rec.strokes;
@@ -3078,7 +3182,17 @@ function setTool(t) {
   closePop();
   if (was === 'select' && t !== 'select') endSel();
   if (t === 'select' && was !== 'select') startSelectMode();
+  if (bar.mode === 'ann') hideBar();
+  paintOneFinger();
+  // telefono: con penna, evidenziatore o gomma un dito scrive e due dita scorrono; con «Mano» un dito scorre
+  if (phone() && was !== t && !notebook.hidden && nb.pages.length) {
+    if (t === 'hl') { for (const p of nb.pages) if (p.wrap.dataset.rendered) pageGeo(p).catch(() => {}); }
+    const what = { pen: 'Penna: scrivi con un dito', hl: 'Evidenziatore: passa il dito sulle parole', eraser: 'Gomma: passa il dito sul tratto' }[t];
+    if (what) toast(what + ' · due dita per scorrere · «Mano» per leggere', 3200);
+  }
 }
+const oneFinger = () => phone() && (S.tool === 'pen' || S.tool === 'hl' || S.tool === 'eraser');
+function paintOneFinger() { document.body.classList.toggle('onefinger', oneFinger()); }
 document.querySelectorAll('.tool').forEach((b) => {
   b.onclick = () => {
     const t = b.dataset.tool;
@@ -3108,43 +3222,103 @@ function paintRdSize() {
 readerEl.querySelectorAll('.rd-sizes button').forEach((b) => { b.onclick = () => {
   const top = rdTopPara(); lsSet('penna.rdSize', b.dataset.size); paintRdSize(); if (top) top.scrollIntoView({ block: 'start' });
 }; });
+// ---------- Dove sta ogni lettera (v22): righe del testo del PDF con la posizione di ogni carattere ----------
+// Serve a evidenziare SOLO le parole scelte (lettura «Aa» ed evidenziatore col dito sul telefono).
+// Le larghezze delle lettere si misurano col carattere che usa anche il livello di testo di pdf.js.
+const fontW = new Map();
+const weightFn = (styles) => (ch, fn) => {
+  const fam = (styles && styles[fn] && styles[fn].fontFamily) || 'sans-serif', key = fam + '|' + ch;
+  let v = fontW.get(key);
+  if (v === undefined) { v = emOf(ch, fam); fontW.set(key, v); }
+  return v;
+};
+// punto del PDF → frazioni della pagina mostrata (anche ruotata)
+const tfPt = (vp, x, y) => { const [m0, m1, m2, m3, m4, m5] = vp.transform; return [(m0 * x + m2 * y + m4) / vp.width, (m1 * x + m3 * y + m5) / vp.height]; };
+const r4 = (v) => Math.round(v * 10000) / 10000;
+function boxRect(vp, [x0, y0, x1, y1]) {
+  const [a, b] = tfPt(vp, x0, y0), [c, d] = tfPt(vp, x1, y1);
+  const L = Math.max(0, Math.min(a, c)), T = Math.max(0, Math.min(b, d));
+  return { l: r4(L), t: r4(T), w: r4(Math.min(1, Math.max(a, c)) - L), h: r4(Math.min(1, Math.max(b, d)) - T) };
+}
+const geoMem = new Map(); // id pagina → Promise({ ls, vp, rows })
+function pageGeo(p) {
+  if (p.rec.type !== 'pdf') return Promise.resolve(null);
+  const id = p.rec.id;
+  if (geoMem.has(id)) return geoMem.get(id);
+  const job = (async () => {
+    const pdf = await getPdf(p.rec.blob), page = await pdf.getPage(p.rec.pdfPage + 1);
+    const tc = await page.getTextContent(), vp = page.getViewport({ scale: 1 });
+    const ls = R.lines(tc.items, weightFn(tc.styles));
+    page.cleanup();
+    // righe per l'evidenziatore col dito (solo pagine diritte o capovolte: righe orizzontali sullo schermo)
+    const rows = vp.rotation % 180 ? [] : ls.map((l) => {
+      const rc = boxRect(vp, R.lineBox(l));
+      const cx = l.cx.map(([a, b]) => { const u = tfPt(vp, a, l.y)[0], v = tfPt(vp, b, l.y)[0]; return [Math.min(u, v), Math.max(u, v)]; });
+      return { t: rc.t, h: rc.h, str: l.str, cx, l };
+    });
+    return { ls, vp, rows };
+  })();
+  geoMem.set(id, job);
+  job.catch(() => geoMem.delete(id));
+  return job;
+}
 // paragrafi di una pagina, con i riquadri delle righe in frazioni della pagina (come le evidenziazioni fatte con Seleziona)
 async function readerData(p) {
   if (rd.cache.has(p.rec.id)) return rd.cache.get(p.rec.id);
   let out = { paras: [], scan: false, notes: p.rec.type !== 'pdf' };
   if (p.rec.type === 'pdf') {
-    const pdf = await getPdf(p.rec.blob), page = await pdf.getPage(p.rec.pdfPage + 1);
-    const tc = await page.getTextContent(), vp = page.getViewport({ scale: 1 });
-    const r4 = (v) => Math.round(v * 10000) / 10000;
-    const paras = R.paragraphs(R.lines(tc.items)).map((g) => {
-      const rects = g.lines.map((l) => {
-        const [x0, y0, x1, y1] = R.lineBox(l), [m0, m1, m2, m3, m4, m5] = vp.transform; // punto del PDF → punto della pagina (anche ruotata)
-        const a = m0 * x0 + m2 * y0 + m4, b = m1 * x0 + m3 * y0 + m5, c = m0 * x1 + m2 * y1 + m4, d = m1 * x1 + m3 * y1 + m5;
-        const L = Math.max(0, Math.min(a, c) / vp.width), T = Math.max(0, Math.min(b, d) / vp.height);
-        return { l: r4(L), t: r4(T), w: r4(Math.min(1, Math.max(a, c) / vp.width) - L), h: r4(Math.min(1, Math.max(b, d) / vp.height) - T) };
-      }).filter((r) => r.w > 0 && r.h > 0);
-      return { text: g.text, quote: N.cleanQuote(normText(g.text)), heading: g.heading, rects };
+    const { ls, vp } = await pageGeo(p);
+    const paras = R.paragraphs(ls).map((g) => {
+      const rects = g.lines.map((l) => boxRect(vp, R.lineBox(l))).filter((r) => r.w > 0 && r.h > 0);
+      // centro di ogni lettera sulla pagina: per mostrare nella lettura le parole evidenziate (anche quelle fatte sul foglio)
+      const ctr = g.map.map((m) => { if (!m) return null; const l = g.lines[m[0]]; return tfPt(vp, (m[1] + m[2]) / 2, l.y + l.fs * 0.31); });
+      return { text: g.text, quote: N.cleanQuote(normText(g.text)), heading: g.heading, rects, lines: g.lines, map: g.map, ctr };
     }).filter((g) => g.quote && g.rects.length);
-    page.cleanup();
-    out = { paras, scan: !paras.length, notes: false };
+    out = { paras, scan: !paras.length, notes: false, vp };
   }
   rd.cache.set(p.rec.id, out);
   return out;
 }
-const overlaps = (a, b) => a.l < b.l + b.w && b.l < a.l + a.w && a.t < b.t + b.h && b.t < a.t + a.h;
+// lettere del paragrafo coperte da un'evidenziazione (o sottolineatura): null = niente
+function paraCover(g, anns) {
+  const n = g.text.length, cov = new Array(n).fill(null), e = 0.002;
+  for (const a of anns) {
+    const rs = a.r || [];
+    for (let i = 0; i < n; i++) {
+      const c = g.ctr[i];
+      if (cov[i] || !c || /\s/.test(g.text[i])) continue;
+      if (rs.some((r) => c[0] >= r.l - e && c[0] <= r.l + r.w + e && c[1] >= r.t - e && c[1] <= r.t + r.h + e)) cov[i] = a;
+    }
+  }
+  // uno spazio è coperto se lo sono le lettere ai suoi lati (dalla stessa evidenziazione)
+  for (let i = 1; i < n - 1; i++) if (!cov[i] && /\s/.test(g.text[i]) && cov[i - 1] && cov[i - 1] === cov[i + 1]) cov[i] = cov[i - 1];
+  return cov;
+}
 function paintReaderAnns(p) {
   const sec = rdBody.querySelector('.rd-page[data-id="' + p.rec.id + '"]'), data = rd.cache.get(p.rec.id);
   if (!sec || !data) return;
   const anns = (p.rec.anns || []).filter((a) => !N.isFix(a));
-  sec.querySelectorAll('.rd-p').forEach((el2) => {
-    const g = data.paras[+el2.dataset.k];
-    const whole = anns.find((a) => a.q === g.quote);
-    const part = !whole && anns.find((a) => (a.r || []).some((r) => g.rects.some((q) => overlaps(r, q))));
-    el2.classList.toggle('on', !!whole); el2.classList.toggle('part', !!part);
-    el2.style.setProperty('--hl', whole ? alpha(whole.c, 0.38) : part ? alpha(part.c, 0.9) : 'transparent');
-    el2.setAttribute('aria-pressed', whole ? 'true' : 'false');
+  sec.querySelectorAll('.rd-p').forEach((pe) => {
+    const g = data.paras[+pe.dataset.k];
+    pe.classList.toggle('on', anns.some((a) => a.q === g.quote));
+    const cov = paraCover(g, anns);
+    if (!cov.some(Boolean)) { if (pe.childElementCount) pe.textContent = g.text; return; }
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < cov.length;) {
+      let j = i;
+      while (j < cov.length && cov[j] === cov[i]) j++;
+      const t = g.text.slice(i, j), a = cov[i];
+      if (a) {
+        const m = el('mark', 'rd-m' + (a.k === 'ul' ? ' u' : '') + (a.n ? ' n' : ''), t); m.dataset.id = a.id;
+        m.style.setProperty('--c', a.k === 'ul' ? a.c : alpha(a.c, 0.42));
+        frag.append(m);
+      } else frag.append(t);
+      i = j;
+    }
+    pe.textContent = ''; pe.append(frag);
   });
 }
+// doppio tocco su un paragrafo: evidenziato tutto (di nuovo: tolto)
 function readerTap(p, k) {
   const g = rd.cache.get(p.rec.id).paras[k];
   const old = (p.rec.anns || []).find((a) => !N.isFix(a) && a.q === g.quote);
@@ -3152,7 +3326,32 @@ function readerTap(p, k) {
   const now = Date.now();
   const a = { id: D.uid(), q: g.quote, c: S.hl.color, a: Math.max(0.2, Math.min(0.6, S.hl.alpha)), r: N.mergeRects(g.rects), t: now, u: now };
   commitAnns([{ p, id: a.id, after: a }]);
-  toast('Evidenziato (anche sulla pagina)');
+  toast('Paragrafo evidenziato (anche sulla pagina)');
+}
+// testo scelto nella lettura (selezione di iOS con le maniglie) → parti per pagina, solo le parole scelte
+function readerSelection(range) {
+  const groups = new Map();
+  for (const pe of rdBody.querySelectorAll('.rd-p')) {
+    if (!range.intersectsNode(pe)) continue;
+    const sec = pe.closest('.rd-page'), p = sec && pageById(sec.dataset.id), data = p && rd.cache.get(p.rec.id), g = data && data.paras[+pe.dataset.k];
+    if (!g || !g.map) continue;
+    const off = (node, o) => { const r = document.createRange(); r.setStart(pe, 0); r.setEnd(node, o); return r.toString().length; };
+    const a = pe.contains(range.startContainer) ? off(range.startContainer, range.startOffset) : 0;
+    const b = pe.contains(range.endContainer) ? off(range.endContainer, range.endOffset) : g.text.length;
+    const w = R.wordSpan(g.text, a, b);
+    if (!w) continue;
+    if (!groups.has(p)) groups.set(p, { vp: data.vp, segs: [] });
+    groups.get(p).segs.push({ g, a: w[0], b: w[1] });
+  }
+  const parts = [];
+  for (const [p, { vp, segs }] of groups) {
+    const rects = segs.flatMap((x) => R.spanBoxes(x.g, x.a, x.b).map((bx) => boxRect(vp, bx)));
+    const quote = N.cleanQuote(normText(segs.map((x) => x.g.text.slice(x.a, x.b)).join('\n')));
+    if (quote && rects.length) parts.push({ p, quote, rects: N.mergeRects(rects), ws: true, we: true, rd: true });
+  }
+  if (!parts.length) return null;
+  parts.sort((a, b) => nb.pages.indexOf(a.p) - nb.pages.indexOf(b.p));
+  return { parts, text: parts.map((x) => x.quote).join('\n\n') };
 }
 async function readerPage(i, before) {
   const p = nb.pages[i];
@@ -3164,8 +3363,6 @@ async function readerPage(i, before) {
   else if (data.scan) sec.append(el('p', 'rd-note', 'Questa pagina è una scansione: non c’è testo da mostrare. Torna alla pagina con «Aa».'));
   data.paras.forEach((g, k) => {
     const e = el(g.heading ? 'h3' : 'p', 'rd-p' + (g.heading ? ' rd-h' : ''), g.text); e.dataset.k = String(k);
-    e.setAttribute('role', 'button'); e.tabIndex = 0;
-    e.onclick = () => readerTap(p, k);
     sec.append(e);
   });
   if (before) { const h0 = readerEl.scrollHeight; rdBody.prepend(sec); readerEl.scrollTop += readerEl.scrollHeight - h0; } else rdBody.append(sec);
@@ -3193,7 +3390,7 @@ function rdTopPara() {
 async function openReader() {
   if (rd.open || !nb.pages.length) return;
   if (!nb.pages.some((p) => p.rec.type === 'pdf')) { toast('La lettura a colonna serve per le pagine dei PDF'); return; }
-  closePop(); endSel();
+  closePop(); endSel(); hideBar();
   rd.open = true; rd.from = rd.to = Math.max(0, curIndex()); rdBody.textContent = '';
   readerEl.hidden = false; notebook.classList.add('reading'); $('btn-read').classList.add('active'); $('btn-read').setAttribute('aria-pressed', 'true');
   paintRdSize(); readerEl.scrollTop = 0;
@@ -3204,15 +3401,33 @@ async function openReader() {
 function closeReader(jump = true) {
   if (!rd.open) return;
   const t = jump && rdTopPara(), sec = t && t.closest('.rd-page');
+  hideBar(); if (rdTap) { clearTimeout(rdTap.timer); rdTap = null; }
   rd.open = false; readerEl.hidden = true; rdBody.textContent = ''; rd.cache.clear();
   notebook.classList.remove('reading'); $('btn-read').classList.remove('active'); $('btn-read').setAttribute('aria-pressed', 'false');
   if (sec) { goToPage(+sec.dataset.i); alignText(); }
 }
 readerEl.addEventListener('scroll', () => { if (readerEl.scrollHeight - readerEl.scrollTop - readerEl.clientHeight < 900) readerMore(); }, { passive: true });
 $('btn-read').onclick = () => (rd.open ? closeReader() : openReader());
+// lettura «Aa»: tocco su una parola evidenziata = barretta; doppio tocco su un paragrafo = evidenziato tutto
+let rdTap = null;
+rdBody.addEventListener('click', (e) => {
+  const sel = document.getSelection();
+  if (sel && !sel.isCollapsed && rdBody.contains(sel.anchorNode)) return;
+  const pe = e.target.closest && e.target.closest('.rd-p');
+  if (!pe) { if (bar.mode === 'ann') hideBar(); return; }
+  const sec = pe.closest('.rd-page'), p = sec && pageById(sec.dataset.id), k = +pe.dataset.k;
+  if (!p) return;
+  const now = performance.now(), m = e.target.closest('mark.rd-m');
+  if (rdTap && rdTap.el === pe && now - rdTap.t < 400) { clearTimeout(rdTap.timer); rdTap = null; if (bar.mode === 'ann') hideBar(); readerTap(p, k); return; }
+  if (rdTap) clearTimeout(rdTap.timer);
+  const id = m && m.dataset.id;
+  rdTap = { el: pe, t: now, timer: setTimeout(() => { rdTap = null; if (id) showBar('ann', p, id); else if (bar.mode === 'ann') hideBar(); }, 400) };
+});
+
 
 async function closeNotebook() {
-  closePop(); endSel(); closeAsk(); closeReader(false);
+  closePop(); endSel(); closeAsk(); closeReader(false); hideBar();
+  geoMem.clear();
   await flush();
   saveLastPage();
   D.setMeta('open', null).catch(() => {});
@@ -3363,4 +3578,4 @@ async function resumeLast() {
 // Appigli per i test automatici
 window.__penna = { D, Sync, S, nb, lib, openNotebook, refreshLibrary, exportBytes, flush, buildPages, setTool, runSearch, pdfjs, thumbUrl, version: APP_VERSION,
   goToPage, curIndex, saveNow, saveSt, copyNotebook, runFind, closeNotebook, want, stats: () => ({ rendering, want: want.size, drawn: nb.pages.filter((p) => p.bg.width > 0).length, textLayers: tlPages.size }),
-  N, R, rd, openReader, closeReader, zoomTo, phone, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };
+  N, R, rd, openReader, closeReader, pageGeo, bar, hideBar, renderAnnList, zoomTo, phone, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };

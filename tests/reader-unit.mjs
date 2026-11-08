@@ -31,5 +31,28 @@ ok('paragrafi: il rientro della prima riga apre un paragrafo nuovo', /^Secondo p
 ok('paragrafi: lo spazio più grande apre un paragrafo nuovo', ps[3].text.startsWith('Terzo'), ps[3].text);
 const lb = R.lineBox(ls[1]);
 ok('riquadro di una riga: dalla linea di base un po’ sotto e sopra', lb[0] === 70 && lb[1] < 740 && lb[3] > 740 && lb[3] - lb[1] > 10 && lb[3] - lb[1] < 13, lb);
+
+// ---- v22: posizione di ogni lettera, parole intere, evidenziatore col dito ----
+ok('righe: una posizione per ogni lettera (anche dopo gli spazi uniti)', ls.every((l) => l.cx.length === l.str.length), ls.map((l) => [l.str.length, l.cx.length]));
+const l1 = ls[1];
+ok('lettere in ordine da sinistra a destra, dentro la riga', l1.cx.every((c, i) => c[1] >= c[0] && (!i || c[0] >= l1.cx[i - 1][0] - 1e-9)) && Math.abs(l1.cx[0][0] - 70) < 1e-6 && Math.abs(l1.cx[l1.cx.length - 1][1] - 535) < 1e-6);
+ok('pezzi uniti con lo spazio: lo spazio sta tra i due pezzi', (() => { const l = ls[6], k = l.str.indexOf(' paragrafo'); return Math.abs(l.cx[k][0] - 100) < 1 && l.cx[k + 1][0] >= 102.9; })(), ls[6].cx.slice(4, 8));
+const g1 = ps[1];
+ok('paragrafo: mappa lettere → righe (lunga quanto il testo, null tra le righe)', g1.map.length === g1.text.length && g1.map.filter((m) => m === null).length === 1, [g1.map.length, g1.text.length]);
+const wi = g1.text.indexOf('lunghissimo');
+ok('paragrafo: «lunghissimo» unito dal trattino ha le lettere su due righe', g1.map[wi][0] === 1 && g1.map[wi + 'lunghissimo'.length - 1][0] === 2, [g1.map[wi], g1.map[wi + 10]]);
+ok('wordSpan: allarga alle parole intere', JSON.stringify(R.wordSpan('la parte acquirente versi il', 5, 22)) === JSON.stringify([3, 25]));
+ok('wordSpan: solo spazi = niente', R.wordSpan('ab   cd', 2, 5) === null);
+const k0 = g1.text.indexOf('parte'), bx = R.spanBoxes(g1, k0, k0 + 'parte acquirente'.length);
+ok('spanBoxes: un riquadro sulla riga giusta, dentro la riga (non tutta)', bx.length === 1 && bx[0][0] > 70 && bx[0][2] < 535 && bx[0][1] < 740 && bx[0][3] > 740, bx);
+const bx2 = R.spanBoxes(g1, g1.text.indexOf('trenta'), g1.text.indexOf('dalla') + 5);
+ok('spanBoxes: due righe → due riquadri', bx2.length === 2 && bx2[0][1] > bx2[1][1], bx2);
+// righe in frazioni di pagina per l'evidenziatore
+const W = 595, H = 842, rows = ls.slice(1, 4).map((l) => ({ t: (H - (l.y + l.fs * 0.86)) / H, h: (l.fs * 1.1) / H, str: l.str, cx: l.cx.map(([a, b]) => [a / W, b / W]) }));
+const r0 = rows[0], ka = r0.str.indexOf('parte'), kb = r0.str.indexOf('versi') + 5, yc = r0.t + r0.h / 2;
+const pts = Array.from({ length: 10 }, (_, i) => [r0.cx[ka + 1][0] + (r0.cx[kb - 2][1] - r0.cx[ka + 1][0]) * i / 9, yc + 0.002]);
+const hits = R.strokeWords(rows, pts, H / W);
+ok('evidenziatore: tratto sulla riga → parole intere «parte acquirente versi»', hits && hits.length === 1 && r0.str.slice(hits[0].a, hits[0].b) === 'parte acquirente versi', hits);
+ok('evidenziatore: tratto fuori dal testo → null (resta tratto libero)', R.strokeWords(rows, pts.map(([x]) => [x, 0.97]), H / W) === null);
 console.log(`\n${pass} ok, ${fail} falliti`);
 process.exit(fail ? 1 : 0);

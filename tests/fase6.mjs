@@ -64,7 +64,7 @@ const SEL_FN = `window.__sel = function (pi, phrase, nth = 0) {
   const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); return true; };`;
 async function select(pi, phrase, nth = 0) {
   if (!(await P.eval(`return __sel(${pi}, ${JSON.stringify(phrase)}, ${nth})`))) throw new Error('frase non trovata: ' + phrase);
-  await P.waitFor(`!document.getElementById('selmenu').hidden && document.getElementById('selmenu').style.visibility!=='hidden'`, 3000, 'menu selezione');
+  await P.waitFor(`(!document.getElementById('selmenu').hidden && document.getElementById('selmenu').style.visibility!=='hidden') || !document.getElementById('hlbar').hidden`, 3000, 'menu selezione'); // v22: sul telefono la barra in basso (#hlbar)
   await sleep(120);
 }
 async function tapMenu(act) { await tap(P, `#selmenu button[data-act="${act}"]`); await sleep(250); }
@@ -376,12 +376,12 @@ try {
   await P.waitFor(`__penna.nb.pages[0].tl && __penna.nb.pages[0].tl.end`, 10000, 'iPhone livello');
   await sleep(300);
   await select(0, 'Corsivo: efficienza, affinità');
-  const im = await rect(P, '#selmenu');
+  const im = await rect(P, '#hlbar');
   ok('iPhone: con Seleziona nessun pannello aperto per sbaglio', await P.eval(`return document.getElementById('pop').hidden`));
-  ok('iPhone: menu sulla selezione dentro lo schermo, sopra la barra strumenti', im.x >= 0 && im.x + im.w <= 390 && im.y > bar.y + bar.h && im.y + im.h <= mid.y, JSON.stringify(im));
-  ok('iPhone: pulsanti del menu >= 44px e parole non tagliate', (await small(P)).length === 0 && await P.eval(`return [...document.querySelectorAll('#selmenu button')].every(b=>b.scrollWidth<=b.clientWidth+1)`), JSON.stringify(await small(P)));
+  ok('iPhone (v22): barra in basso sulla selezione dentro lo schermo, menu da iPad nascosto', im.x >= 0 && im.x + im.w <= 390 && im.y > bar.y + bar.h && im.y + im.h <= mid.y && await P.eval(`return document.getElementById('selmenu').hidden`), JSON.stringify(im));
+  ok('iPhone: pulsanti della barra >= 44px e parole non tagliate', (await small(P)).length === 0 && await P.eval(`return [...document.querySelectorAll('#hlbar button')].filter(b=>b.offsetParent).every(b=>b.scrollWidth<=b.clientWidth+1)`), JSON.stringify(await small(P)) + ' ' + await P.eval(`return [...document.querySelectorAll('#hlbar button')].filter(b=>b.offsetParent).map(b=>(b.dataset.act||'')+':'+b.scrollWidth+'/'+b.clientWidth).join(' ')`));
   await shot(P, 'iphone-selezione-menu');
-  await tapMenu('note');
+  await tap(P, '#hlbar [data-act="note"]'); await sleep(250);
   await P.type('Nota dall’iPhone');
   await shot(P, 'iphone-commento-editor');
   await tap(P, '#cdlg-ok'); await sleep(300);

@@ -7,8 +7,23 @@ const fsOf = (it) => Math.hypot(it.transform[2], it.transform[3]) || it.height |
 // solo testo orizzontale (niente scritte ruotate a margine)
 const flat = (it) => Math.abs(it.transform[1]) < 0.02 * Math.abs(it.transform[0] || 1) && it.transform[0] > 0;
 
+// peso di larghezza di una lettera quando non si può misurare col carattere vero (stima: i, l, spazio stretti; m, w larghe)
+export const charWeight = (ch) => (/\s/.test(ch) ? 0.28 : /[iljtfrI.,;:'’!|()\[\]-]/.test(ch) ? 0.3 : /[mwMW@%]/.test(ch) ? 0.82 : /[A-Z]/.test(ch) ? 0.68 : 0.52);
+// dove sta ogni lettera di un pezzo di testo: [x inizio, x fine] in punti del PDF. La larghezza del pezzo (vera, data dal PDF)
+// si divide tra le lettere in proporzione alla loro larghezza (wf(lettera, font) misurata, oppure stimata)
+function charXs(it, wf) {
+  const s = it.str, x = it.transform[4], w = it.width || 0, ws = [];
+  let tot = 0;
+  for (let i = 0; i < s.length; i++) { const v = Math.max(0.01, +(wf ? wf(s[i], it.fontName) : charWeight(s[i])) || 0.01); ws.push(v); tot += v; }
+  const out = [];
+  let acc = 0;
+  for (let i = 0; i < s.length; i++) { const a = x + (w * acc) / tot; acc += ws[i]; out.push([a, x + (w * acc) / tot]); }
+  return out;
+}
+
 // pezzi → righe, nell'ordine del PDF. Una riga nuova quando la linea di base cambia o il testo torna indietro.
-export function lines(items) {
+// Ogni riga ha anche cx: la posizione di ogni lettera di str (per evidenziare solo alcune parole).
+export function lines(items, wf) {
   const out = [];
   let cur = null;
   for (const it of items || []) {
@@ -19,19 +34,32 @@ export function lines(items) {
     const fs = fsOf(it), x = it.transform[4], y = it.transform[5], w = it.width || 0;
     if (fs <= 0) continue;
     const same = cur && !cur.eol && Math.abs(y - cur.y) < Math.max(cur.fs, fs) * 0.45 && x > cur.x1 - Math.max(cur.fs, fs) * 0.6;
+    const xs = charXs(it, wf);
     if (!same) {
-      cur = { str: s, x0: x, x1: x + w, y, fs, n: s.length, eol: false, sp: false };
+      cur = { str: s, cx: xs, x0: x, x1: x + w, y, fs, n: s.length, eol: false, sp: false };
       out.push(cur);
     } else {
       const gap = x - cur.x1;
       const space = cur.sp || (gap > Math.min(cur.fs, fs) * 0.12 && !/\s$/.test(cur.str) && !/^\s/.test(s));
+      if (space) cur.cx.push([cur.x1, Math.max(cur.x1, x)]);
+      cur.cx.push(...xs);
       cur.str += (space ? ' ' : '') + s;
       cur.x1 = Math.max(cur.x1, x + w); cur.x0 = Math.min(cur.x0, x);
       cur.fs = Math.max(cur.fs, fs); cur.n += s.length; cur.sp = false;
     }
     if (it.hasEOL) cur.eol = true;
   }
-  for (const l of out) { l.str = l.str.replace(/\s+/g, ' ').trim(); delete l.sp; delete l.eol; }
+  // spazi doppi → uno solo, niente spazi ai lati (le posizioni delle lettere seguono)
+  for (const l of out) {
+    let t = '';
+    const cx = [];
+    for (let i = 0; i < l.str.length; i++) {
+      const ch = l.str[i];
+      if (/\s/.test(ch)) { if (t && t[t.length - 1] !== ' ') { t += ' '; cx.push(l.cx[i]); } } else { t += ch; cx.push(l.cx[i]); }
+    }
+    if (t.endsWith(' ')) { t = t.slice(0, -1); cx.pop(); }
+    l.str = t; l.cx = cx; delete l.sp; delete l.eol;
+  }
   return out.filter((l) => l.str);
 }
 
@@ -93,13 +121,16 @@ export function paragraphs(ls) {
       const shortEnd = prev.x1 < colR - body * 2.5 && ENDS.test(prev.str);
       split = sizeJump || bigGap || indent || shortEnd;
     }
-    if (split) { cur = { lines: [], fs: l.fs, text: '' }; out.push(cur); }
+    if (split) { cur = { lines: [], fs: l.fs, text: '', map: [] }; out.push(cur); }
+    const li = cur.lines.length;
     cur.lines.push(l);
     cur.fs = Math.max(cur.fs, l.fs);
+    // map: per ogni lettera del paragrafo [riga, x inizio, x fine] (null = spazio messo tra due righe)
+    const own = (l.cx && l.cx.length === l.str.length ? l.cx : [...l.str].map(() => [l.x0, l.x1])).map(([a, b]) => [li, a, b]);
     // a capo con trattino in mezzo a una parola: si riunisce («lun-» + «ghezza» = «lunghezza»)
-    if (!cur.text) cur.text = l.str;
-    else if (/[a-zà-ÿ]-$/i.test(cur.text) && /^[a-zà-ÿ]/.test(l.str)) cur.text = cur.text.slice(0, -1) + l.str;
-    else cur.text += ' ' + l.str;
+    if (!cur.text) { cur.text = l.str; cur.map.push(...own); }
+    else if (/[a-zà-ÿ]-$/i.test(cur.text) && /^[a-zà-ÿ]/.test(l.str)) { cur.text = cur.text.slice(0, -1) + l.str; cur.map.pop(); cur.map.push(...own); }
+    else { cur.text += ' ' + l.str; cur.map.push(null, ...own); }
   }
   for (const p of out) p.heading = p.fs > body * 1.2 && p.text.length < 200;
   return out;
@@ -107,3 +138,65 @@ export function paragraphs(ls) {
 
 // riquadro di una riga in coordinate del PDF: [x0, yBasso, x1, yAlto] (un po' sopra e sotto la linea di base)
 export const lineBox = (l) => [l.x0, l.y - l.fs * 0.24, l.x1, l.y + l.fs * 0.86];
+
+// [a, b) allargato alle parole intere (senza spazi ai lati); null se dentro ci sono solo spazi
+export function wordSpan(text, a, b) {
+  a = Math.max(0, Math.min(a, text.length)); b = Math.max(a, Math.min(b, text.length));
+  while (a < b && /\s/.test(text[a])) a++;
+  while (b > a && /\s/.test(text[b - 1])) b--;
+  if (b <= a) return null;
+  while (a > 0 && /\S/.test(text[a - 1])) a--;
+  while (b < text.length && /\S/.test(text[b])) b++;
+  return [a, b];
+}
+
+// lettere [a, b) di un paragrafo → un riquadro per riga toccata, in coordinate del PDF [x0, yBasso, x1, yAlto]
+export function spanBoxes(g, a, b) {
+  const by = new Map();
+  for (let i = Math.max(0, a); i < Math.min(b, g.text.length); i++) {
+    const m = g.map[i];
+    if (!m || /\s/.test(g.text[i])) continue;
+    const c = by.get(m[0]);
+    if (!c) by.set(m[0], [m[1], m[2]]); else { c[0] = Math.min(c[0], m[1]); c[1] = Math.max(c[1], m[2]); }
+  }
+  return [...by].sort((x, y) => x[0] - y[0]).map(([li, [x0, x1]]) => { const bx = lineBox(g.lines[li]); return [x0, bx[1], x1, bx[3]]; });
+}
+
+// Evidenziatore «intelligente»: il tratto del dito (pts, frazioni della pagina) passa sopra righe di testo?
+// rows: [{ t, h, str, cx: [[l, r]] }] in frazioni della pagina; aspect = altezza / larghezza della pagina.
+// Se almeno il 60% dei punti sta su una riga: per ogni riga toccata le parole intere sotto il dito [{ row, a, b }]; altrimenti null.
+export function strokeWords(rows, pts, aspect = 1.414) {
+  if (!rows || !rows.length || !pts || !pts.length) return null;
+  const hits = new Map();
+  let on = 0;
+  for (const [x, y] of pts) {
+    let best = -1, bd = Infinity;
+    rows.forEach((r, i) => {
+      if (!r.cx.length) return;
+      const pad = r.h * aspect * 0.6, L = r.cx[0][0], Rr = r.cx[r.cx.length - 1][1];
+      if (x < L - pad || x > Rr + pad) return;
+      const d = Math.abs(y - (r.t + r.h / 2));
+      if (d <= r.h * 0.75 && d < bd) { bd = d; best = i; }
+    });
+    if (best < 0) continue;
+    on++;
+    const h = hits.get(best);
+    if (!h) hits.set(best, [x, x]); else { h[0] = Math.min(h[0], x); h[1] = Math.max(h[1], x); }
+  }
+  if (on < pts.length * 0.6) return null;
+  const out = [];
+  for (const [i, [x0, x1]] of hits) {
+    const r = rows[i];
+    let a = -1, b = -1, near = -1, nd = Infinity;
+    r.cx.forEach(([l, rr], k) => {
+      if (/\s/.test(r.str[k])) return;
+      if (rr >= x0 && l <= x1) { if (a < 0) a = k; b = k + 1; }
+      const d = Math.min(Math.abs(l - x0), Math.abs(rr - x0));
+      if (d < nd) { nd = d; near = k; }
+    });
+    if (a < 0) { if (near < 0) continue; a = near; b = near + 1; }
+    const w = wordSpan(r.str, a, b);
+    if (w) out.push({ row: i, a: w[0], b: w[1] });
+  }
+  return out.length ? out.sort((p, q) => p.row - q.row) : null;
+}

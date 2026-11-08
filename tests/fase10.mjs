@@ -55,7 +55,7 @@ window.__strikeAt = function (pi, id) { const p = __penna.nb.pages[pi], W = p.wr
   return out; };`;
 async function select(pa, A, pb = pa, B = A) {
   if (!(await P.eval(`return __selRange(${pa}, ${JSON.stringify(A)}, ${pb}, ${JSON.stringify(B)})`))) throw new Error('frase non trovata: ' + A + ' … ' + B);
-  await P.waitFor(`!document.getElementById('selmenu').hidden && document.getElementById('selmenu').style.visibility!=='hidden'`, 3000, 'menu selezione');
+  await P.waitFor(`(!document.getElementById('selmenu').hidden && document.getElementById('selmenu').style.visibility!=='hidden') || !document.getElementById('hlbar').hidden`, 3000, 'menu selezione'); // v22: sul telefono la barra in basso (#hlbar)
   await sleep(300); // il menu si apre con un'animazione (0,14 s, parte dal 94%): misure solo a fine animazione
 }
 async function tapMenu(act) { await tap(P, `#selmenu button[data-act="${act}"]`); await sleep(300); }
@@ -286,15 +286,21 @@ try {
     catch (e) { console.log(await P.eval(`const p=__penna.nb.pages[0]; return JSON.stringify({r:p.wrap.dataset.rendered, rendered:p.rendered, tl:!!p.tl, end:!!(p.tl&&p.tl.end), tool:__penna.S.tool, pg:!!p.pg, nb:!document.getElementById('notebook').hidden, cw:p.cw, iw:innerWidth})`)); throw e; }
     await sleep(500);
     await select(0, 'Una parola');
+    if (w === 390) { // v22: sul telefono barra in basso; Barra e Modifica stanno in «Altro»
+      const hb = await rect(P, '#hlbar');
+      ok(`${name}: barra in basso dentro lo schermo, pulsanti >= 44px, Altro raggiungibile`, hb.x >= 0 && hb.x + hb.w <= w && hb.y + hb.h <= h && (await small(P)).length === 0 && await reachable(P, '#hlbar [data-act=more]'), JSON.stringify(hb));
+      await shot(P, 'menu-' + w);
+      await tap(P, '#hlbar [data-act=more]'); await sleep(400);
+      await P.eval(`[...document.querySelectorAll('#dlg-options .opt')].find(b=>/Barra/.test(b.textContent)).click(); return 1`); await sleep(400);
+      ok('iPhone: Barra col tocco (da «Altro»)', (await anns()).some((a) => a.q === 'Una parola' && a.k === 'del'));
+      continue;
+    }
     const m = await rect(P, '#selmenu'), cls = await P.eval(`return document.getElementById('selmenu').className`);
     const bar = await rect(P, '.pillbar.mid');
     ok(`${name}: menu dentro lo schermo (${cls || 'una riga'}), sopra la barra strumenti`, m.x >= 0 && m.x + m.w <= w && m.y > 50 && (m.y + m.h <= bar.y || m.y > bar.y + bar.h), JSON.stringify({ m, bar }));
     ok(`${name}: pulsanti >= 44px, parole non tagliate, Barra e Modifica raggiungibili`, (await small(P)).length === 0 && await P.eval(`return [...document.querySelectorAll('#selmenu button')].every(b=>b.scrollWidth<=b.clientWidth+1)`) && await reachable(P, '#selmenu [data-act=strike]') && await reachable(P, '#selmenu [data-act=edit]'), JSON.stringify(await small(P)));
     await shot(P, 'menu-' + w);
-    if (w === 390) {
-      await tapMenu('strike');
-      ok('iPhone: Barra col tocco', (await anns()).some((a) => a.q === 'Una parola' && a.k === 'del'));
-    } else await P.eval('getSelection().removeAllRanges(); return 1');
+    await P.eval('getSelection().removeAllRanges(); return 1');
   }
 
   ok('nessun errore a schermo', await P.eval('return document.getElementById("errbox").hidden'), await P.eval('return document.getElementById("err-msg").textContent'));

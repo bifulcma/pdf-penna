@@ -24,6 +24,8 @@
 <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3.2"/><path d="M9.5 4.5v15M5.9 8.2h1.2M5.9 11h1.2"/></symbol>
 <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4.5 19.5l.9-3.9L15.6 5.4a2 2 0 0 1 2.8 0l.2.2a2 2 0 0 1 0 2.8L8.4 18.6z"/><path d="M14 7l3 3"/></symbol>
 <symbol id="i-hl" viewBox="0 0 24 24"><path d="M8.8 12.6 15.9 5.5a1.9 1.9 0 0 1 2.7 0l.9.9a1.9 1.9 0 0 1 0 2.7l-7.1 7.1"/><path d="M8.8 12.6l3.6 3.6-1.6 1.6H7.2v-3.6z"/><path d="M7.2 17.8 5 20h4.2"/></symbol>
+<symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13.5V6a1.5 1.5 0 0 1 3 0v5"/><path d="M11 10.5V4.5a1.5 1.5 0 0 1 3 0v6"/><path d="M14 10.5V6a1.5 1.5 0 0 1 3 0v5"/><path d="M17 11a1.5 1.5 0 0 1 3 0v3.5a6.5 6.5 0 0 1-6.5 6.5h-1a6 6 0 0 1-4.6-2.2L4.7 15a1.5 1.5 0 0 1 2.3-1.9L8 14.3"/></symbol>
+<symbol id="i-underline" viewBox="0 0 24 24"><path d="M7.5 4.5v6a4.5 4.5 0 0 0 9 0v-6"/><path d="M5.5 19.5h13"/></symbol>
 <symbol id="i-finger" viewBox="0 0 24 24"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M12 10.5V9a1.5 1.5 0 0 1 3 0v2"/><path d="M15 11a1.5 1.5 0 0 1 3 0v4.5a5.5 5.5 0 0 1-5.5 5.5h-1.2a5 5 0 0 1-4-2L5 15.5a1.5 1.5 0 0 1 2.4-1.8L9 15.5"/></symbol>
 <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M5.1 14.3l8.6-8.6a2 2 0 0 1 2.8 0l2.8 2.8a2 2 0 0 1 0 2.8l-7.8 7.8a2 2 0 0 1-1.4.6H8.6a2 2 0 0 1-1.4-.6l-2.1-2.1a2 2 0 0 1 0-2.7z"/><path d="M9.3 10.1l5.6 5.6M12.5 19.7h7"/></symbol>
 <symbol id="i-text" viewBox="0 0 24 24"><path d="M5.5 7.5v-2h13v2M12 5.5v13M9.5 18.5h5"/></symbol>
@@ -110,6 +112,7 @@
       <button id="btn-pages" class="ib" type="button" aria-label="Pagine, segnalibri e ricerca" title="Pagine, segnalibri e ricerca"><svg class="ic" aria-hidden="true"><use href="#i-sidebar"/></svg></button>
     </div>
     <div class="pillbar mid" id="tools">
+      <button id="tool-hand" class="ib tool" type="button" data-tool="hand" aria-label="Mano: leggi e scorri con un dito" title="Mano: leggi e scorri"><svg class="ic" aria-hidden="true"><use href="#i-hand"/></svg></button>
       <button id="tool-pen" class="ib tool active" type="button" data-tool="pen" aria-label="Penna" title="Penna"><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg><i class="dot"></i></button>
       <button id="tool-hl" class="ib tool" type="button" data-tool="hl" aria-label="Evidenziatore" title="Evidenziatore"><svg class="ic" aria-hidden="true"><use href="#i-hl"/></svg><i class="dot"></i></button>
       <button id="tool-eraser" class="ib tool" type="button" data-tool="eraser" aria-label="Gomma" title="Gomma"><svg class="ic" aria-hidden="true"><use href="#i-eraser"/></svg></button>
@@ -184,7 +187,7 @@
         <div class="rd-sizes" role="group" aria-label="Grandezza del testo">
           <button type="button" data-size="0" aria-label="Testo piccolo">A</button><button type="button" data-size="1" aria-label="Testo medio">A</button><button type="button" data-size="2" aria-label="Testo grande">A</button>
         </div>
-        <span class="rd-tip">Tocca un paragrafo per evidenziarlo</span>
+        <span class="rd-tip">Tieni premuto su una parola per evidenziare · doppio tocco = tutto il paragrafo</span>
       </div>
       <button id="rd-prev" class="pill small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-up"/></svg><span>Pagina precedente</span></button>
       <div id="rd-body"></div>
@@ -228,6 +231,23 @@
   <button type="button" data-act="note"><svg class="ic" aria-hidden="true"><use href="#i-comment"/></svg><span>Commenta</span></button>
   <button type="button" data-act="copynote"><svg class="ic" aria-hidden="true"><use href="#i-copy-note"/></svg><span class="long">Copia con commento</span><span class="short">Copia + nota</span></button>
   <button type="button" data-act="ask" class="ask-act"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg><span>Chiedi</span></button>
+</div>
+
+<!-- Telefono: barra in basso sul testo scelto / sull'evidenziazione toccata -->
+<div id="hlbar" hidden role="toolbar" aria-label="Testo scelto">
+  <div class="hb-row hb-colors"><span id="hb-lbl">Evidenzia</span>
+    <button type="button" class="hb-c" data-act="hl" data-c="#f5c400" aria-label="Giallo"><i style="background:#f5c400"></i></button>
+    <button type="button" class="hb-c" data-act="hl" data-c="#7fd35b" aria-label="Verde"><i style="background:#7fd35b"></i></button>
+    <button type="button" class="hb-c" data-act="hl" data-c="#ff7eb6" aria-label="Rosa"><i style="background:#ff7eb6"></i></button>
+    <button type="button" class="hb-c" data-act="hl" data-c="#4fc3f7" aria-label="Azzurro"><i style="background:#4fc3f7"></i></button>
+  </div>
+  <div class="hb-row hb-acts">
+    <button type="button" data-act="ul"><svg class="ic" aria-hidden="true"><use href="#i-underline"/></svg><span>Sottolinea</span></button>
+    <button type="button" data-act="note"><svg class="ic" aria-hidden="true"><use href="#i-comment"/></svg><span>Nota</span></button>
+    <button type="button" data-act="copy"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span>Copia</span></button>
+    <button type="button" data-act="more" class="hb-sel"><svg class="ic" aria-hidden="true"><use href="#i-more"/></svg><span>Altro</span></button>
+    <button type="button" data-act="del" class="hb-ann"><svg class="ic" aria-hidden="true"><use href="#i-trash"/></svg><span>Togli</span></button>
+  </div>
 </div>
 
 <!-- Commento su una frase -->

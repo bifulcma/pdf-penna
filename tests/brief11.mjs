@@ -85,7 +85,7 @@ try {
   const prev = fs.existsSync(OUT + '/brief11-iphone-prima.json') ? JSON.parse(fs.readFileSync(OUT + '/brief11-iphone-prima.json', 'utf8')) : null;
   if (prev) console.log(`     confronto: prima ${prev.px} px → dopo ${m1.px} px (×${(m1.px / prev.px).toFixed(2)})`);
 
-  ok('app v21, telefono riconosciuto (body.phone), margini tagliati in memoria', await q(`__penna.version==='v21' && document.body.classList.contains('phone') && !!__penna.nb.crop && __penna.nb.crop.r-__penna.nb.crop.l<0.9`), await q(`JSON.stringify(__penna.nb.crop)`));
+  ok('app v22, telefono riconosciuto (body.phone), margini tagliati in memoria', await q(`__penna.version==='v22' && document.body.classList.contains('phone') && !!__penna.nb.crop && __penna.nb.crop.r-__penna.nb.crop.l<0.9`), await q(`JSON.stringify(__penna.nb.crop)`));
   ok('testo più grande senza fare nulla (almeno +20% rispetto a prima)', !prev || m1.px >= prev.px * 1.2, JSON.stringify([prev, m1]));
   ok('le righe intere stanno nello schermo (inizio ≥ 0, fine ≤ 390)', m1.left >= 0 && m1.right <= 390 && m1.left < 30 && m1.right > 360, JSON.stringify(m1));
 
@@ -104,10 +104,10 @@ try {
   ok('barra scorsa fino in fondo: Salva raggiungibile', await P.eval(`const b=document.getElementById('btn-save').getBoundingClientRect(); return b.right<=390 && b.left>=0`));
   await P.eval(`document.querySelector('.toprow').scrollLeft=0; return 1`);
 
-  // un dito con la penna (Dito spento) scorre e non disegna
+  // un dito con «Mano» (v22: il telefono apre il quaderno con Mano) scorre e non disegna
   const st0 = await q(`document.getElementById('viewer').scrollTop`), s0 = await strokes(P, 0);
   await touch(P, 'touchStart', 200, 600); for (let i = 1; i <= 10; i++) { await touch(P, 'touchMove', 200, 600 - i * 30); await sleep(16); } await touch(P, 'touchEnd', 200, 300); await sleep(500);
-  ok('un dito (penna scelta, Dito spento): la pagina scorre e niente tratto', (await q(`document.getElementById('viewer').scrollTop`)) > st0 + 100 && (await strokes(P, 0)) === s0);
+  ok('un dito (Mano, come all’apertura sul telefono): la pagina scorre e niente tratto', (await q(`document.getElementById('viewer').scrollTop`)) > st0 + 100 && (await strokes(P, 0)) === s0);
   await P.eval(`__penna.goToPage(0); return 1`); await sleep(300);
 
   // pizzico a due dita
@@ -162,15 +162,15 @@ try {
   const para = await rect(P, '#rd-body .rd-page[data-i="0"] .rd-p:not(.rd-h)');
   ok('paragrafo in vista, non coperto dalla barretta delle misure', await P.eval(`const p=document.querySelector('#rd-body .rd-page[data-i="0"] .rd-p:not(.rd-h)'), r=p.getBoundingClientRect(), h=document.elementFromPoint(r.x+r.width/2, r.y+r.height/2); return p.contains(h)`));
   const hitInfo = await P.eval(`const h=document.elementFromPoint(${para.cx}, ${para.cy}); return (h.id||h.className||h.tagName)+' '+(h.textContent||'').slice(0,30)+' | reader '+document.getElementById('reader').hidden+' rd '+__penna.rd.open+' toast '+document.getElementById('toast').textContent`);
-  await tapXY(P, para.cx, para.cy); await sleep(400);
+  await dbl(para.cx, para.cy); // v22: doppio tocco = tutto il paragrafo (il tocco singolo non evidenzia più)
   if (!(await q(`(__penna.nb.pages[0].rec.anns||[]).length`))) console.log('     DIAG tocco in', JSON.stringify(para), hitInfo, '→ dopo:', await q(`document.getElementById('toast').textContent + ' | err ' + document.getElementById('err-msg').textContent + ' | pagine ' + __penna.nb.pages.map(p=>(p.rec.anns||[]).length).join(',')`));
   const a = await q(`(()=>{const l=__penna.nb.pages[0].rec.anns||[]; const a=l[l.length-1]; return a && {q:a.q, r:a.r, n:l.length}})()`);
   // il paragrafo 1.1 sta sotto il titolo, sul margine sinistro (25 mm = 0,119) e destro (1 - 22/210 = 0,895)
   const okR = a && a.r.length >= 3 && a.r.every((r) => r.l > 0.09 && r.l < 0.14 && r.t > 0.05 && r.t < 0.35 && r.h > 0.008 && r.h < 0.03) && a.r.some((r) => r.l + r.w > 0.87 && r.l + r.w < 0.92);
-  ok('tocco su un paragrafo: evidenziazione vera sulla pagina (riquadri sulle righe giuste)', a && a.n === n0 + 1 && /^Paragrafo 1\.1\./.test(a.q) && okR, JSON.stringify(a));
+  ok('doppio tocco su un paragrafo: evidenziazione vera sulla pagina (riquadri sulle righe giuste)', a && a.n === n0 + 1 && /^Paragrafo 1\.1\./.test(a.q) && okR, JSON.stringify(a));
   ok('il paragrafo appare evidenziato nella lettura', await q(`document.querySelector('#rd-body .rd-page[data-i="0"] .rd-p:not(.rd-h)').classList.contains('on')`));
-  await tapXY(P, para.cx, para.cy); await sleep(400);
-  ok('secondo tocco: evidenziazione tolta', (await q(`(__penna.nb.pages[0].rec.anns||[]).length`)) === n0 && !(await q(`document.querySelector('#rd-body .rd-page[data-i="0"] .rd-p:not(.rd-h)').classList.contains('on')`)));
+  await dbl(para.cx, para.cy);
+  ok('di nuovo doppio tocco: evidenziazione tolta', (await q(`(__penna.nb.pages[0].rec.anns||[]).length`)) === n0 && !(await q(`document.querySelector('#rd-body .rd-page[data-i="0"] .rd-p:not(.rd-h)').classList.contains('on')`)));
   await P.eval(`document.getElementById('btn-undo').scrollIntoView({inline:'center'}); return 1`); await sleep(200);
   await tap(P, '#btn-undo'); await sleep(300);
   await P.eval(`document.querySelector('.toprow').scrollLeft=0; return 1`);

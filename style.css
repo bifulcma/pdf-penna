@@ -273,6 +273,9 @@ body.finger .page canvas.draw { touch-action: pan-y; }
 .ann-r { position: absolute; border-radius: 2px; mix-blend-mode: multiply; }
 .ann-r.flash { animation: annflash .7s var(--ease) 3; }
 /* Barra / Modifica: linea rossa sopra le lettere (a metà delle minuscole), segno ^ dove va il testo nuovo */
+/* Sottolinea (v22): linea colorata appena sotto le lettere */
+.ann-r.ann-u { mix-blend-mode: normal; background: none; }
+.ann-r.ann-u::after { content: ""; position: absolute; left: 0; right: 0; top: 82%; height: max(2px, 9%); border-radius: 2px; background: var(--c); }
 .ann-r.ann-x { mix-blend-mode: normal; border-radius: 0; }
 .ann-r.ann-x::before { content: ""; position: absolute; left: 0; right: 0; top: 52%; height: max(1.5px, 9%); transform: translateY(-50%); border-radius: 2px; background: #d93025; }
 .ann-caret { position: absolute; overflow: visible; pointer-events: none; color: #d93025; }
@@ -824,15 +827,42 @@ body.phone #btn-read { display: inline-flex; }
 #reader .rd-pg { margin-top: 22px; margin-bottom: 12px; text-align: center; font-size: 12px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: #9A8E84; }
 .rd-p { margin: 0 -6px .7em; padding: 3px 6px; border-radius: 6px; font-family: 'Iowan Old Style', 'Palatino', Georgia, serif; font-size: var(--rd-fs, 20px); line-height: 1.55;
   overflow-wrap: break-word; -webkit-hyphens: auto; hyphens: auto; cursor: pointer; transition: background-color .15s, box-shadow .15s; }
-.rd-p.on { background: var(--hl); }
-.rd-p.part { box-shadow: inset 4px 0 0 var(--hl); }
-.rd-p:active { background: rgba(43, 38, 35, .06); }
-.rd-p.on:active { background: var(--hl); }
+/* v22: il testo si sceglie con le maniglie di iOS; le parole evidenziate/sottolineate sono <mark> */
+.rd-p { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; cursor: text; }
+.rd-p::selection, .rd-p ::selection { background: rgba(31, 95, 209, .24); }
+mark.rd-m { background: var(--c); color: inherit; border-radius: 3px; padding: .04em 0; -webkit-box-decoration-break: clone; box-decoration-break: clone; cursor: pointer; }
+mark.rd-m.u { background: none; text-decoration: underline; text-decoration-color: var(--c); text-decoration-thickness: 2.5px; text-underline-offset: .18em; }
+mark.rd-m.n { border-bottom: 2px dotted rgba(43, 38, 35, .45); }
 .rd-h { font-size: calc(var(--rd-fs, 20px) * 1.2); font-weight: 650; line-height: 1.3; margin-top: .5em; }
 .rd-note { color: #857A70; font-style: italic; font-size: 16px; }
 #notebook.reading #scrub { display: none; }
 #reader .rd-p, #reader .rd-pg { scroll-margin-top: 66px; } /* «portato in cima»: non finisce sotto la barretta A A A */
 #rd-end { text-align: center; color: #9A8E84; font-size: 14px; margin-top: 28px; }
+
+/* ============ Telefono (v22): «Mano», un dito scrive con penna/evidenziatore, barra in basso sul testo scelto ============ */
+#tool-hand { display: none; }
+body.phone #tool-hand { display: inline-flex; }
+body.phone #btn-finger { display: none; }
+body.phone.finger .page canvas.draw { touch-action: pan-x pan-y; } /* «Dito» (iPad) non conta sul telefono: con Mano si scorre in tutte le direzioni */
+body.phone.onefinger .page canvas.draw { touch-action: none; }
+#hlbar { position: fixed; z-index: 46; left: calc(var(--sl) + 8px); right: calc(var(--sr) + 8px); bottom: calc(var(--sb) + 8px); max-width: 440px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 2px; padding: 6px; border-radius: 20px; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line-2); box-shadow: var(--shadow-3); animation: popin .14s var(--ease); touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+#hlbar .hb-row { display: flex; align-items: center; justify-content: space-between; gap: 2px; }
+#hb-lbl { flex: 1; padding-left: 10px; font-size: 15px; font-weight: 650; }
+#hlbar button { min-height: 44px; min-width: 44px; border: 0; border-radius: 13px; background: transparent; color: var(--ink); }
+#hlbar button:active { background: var(--accent-soft); transform: scale(.95); }
+#hlbar .hb-c { display: grid; place-items: center; width: 48px; }
+#hlbar .hb-c i { display: block; width: 28px; height: 28px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .14); }
+#hlbar .hb-c.on i { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--ink); }
+#hlbar .hb-acts { border-top: 1px solid var(--line); padding-top: 2px; }
+#hlbar .hb-acts button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 54px; padding: 4px 2px; font-size: 12.5px; font-weight: 600; }
+#hlbar .hb-acts .ic { width: 22px; height: 22px; color: var(--accent); }
+#hlbar[data-mode="sel"] .hb-ann, #hlbar[data-mode="ann"] .hb-sel { display: none; }
+body.hlbar-on #reader { padding-bottom: calc(var(--sb) + 170px); }
+body.hlbar-on #notebook:not([hidden]) ~ #toast { bottom: calc(var(--sb) + 150px); }
+.ann-row .kind.ul { background: rgba(31, 95, 209, .1); color: #1f5fd1; }
+@media (max-width: 600px) { #tool-hand { order: 9; } }
 
 /* ============ iPhone in verticale (v21): una sola barra in alto, scorrevole; le pagine cominciano sotto ============ */
 @media (max-width: 600px) {
