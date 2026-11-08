@@ -3100,7 +3100,7 @@ paintColorChip();
 const rd = { open: false, from: 0, to: -1, cache: new Map(), obs: null, loading: false };
 const RD_SIZES = [17, 20, 24];
 const readerEl = $('reader'), rdBody = $('rd-body');
-const rdSize = () => { const v = +lsGet('penna.rdSize'); return v >= 0 && v <= 2 ? v : 1; };
+const rdSize = () => { const v = lsGet('penna.rdSize'); return v === '0' || v === '2' ? +v : 1; }; // di partenza: media (20 px)
 function paintRdSize() {
   readerEl.style.setProperty('--rd-fs', RD_SIZES[rdSize()] + 'px');
   readerEl.querySelectorAll('.rd-sizes button').forEach((b) => { const on = +b.dataset.size === rdSize(); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });

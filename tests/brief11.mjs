@@ -138,13 +138,14 @@ try {
   ok('dati intatti dopo il riavvio (4 pagine, il PDF c’è ancora)', (await q(`(await __penna.D.pagesOf(${JSON.stringify(id)})).length`)) === 4);
 
   // ---------------- modalità lettura «Aa» ----------------
+  await P.eval(`localStorage.removeItem('penna.rdSize'); return 1`); // misura di partenza (il browser di prova può ricordare prove vecchie)
   await tap(P, '#btn-read');
   await P.waitFor(`!document.getElementById('reader').hidden && document.querySelectorAll('#rd-body .rd-p').length>8`, 10000, 'lettura aperta');
   await sleep(400);
   const rdm = await P.eval(`const ps=[...document.querySelectorAll('#rd-body .rd-page[data-i="0"] .rd-p:not(.rd-h)')], r=ps[1].getBoundingClientRect(), cs=getComputedStyle(ps[1]);
     return { n: ps.length, fs: parseFloat(cs.fontSize), w: Math.round(r.width), left: Math.round(r.left), right: Math.round(r.right), h: document.querySelectorAll('#rd-body .rd-h').length,
       txt: ps[0].textContent, bg: getComputedStyle(document.getElementById('reader')).backgroundColor, top: Math.round(document.getElementById('reader').getBoundingClientRect().top) }`);
-  ok(`Aa: testo a colonna (${rdm.n} paragrafi, ${rdm.h} titoli), carattere ${rdm.fs} px ≥ 15, dentro lo schermo, sfondo carta`, rdm.n >= 9 && rdm.h >= 1 && rdm.fs >= 15 && rdm.left >= 0 && rdm.right <= 390 && /^rgb\(251, 246, 236/.test(rdm.bg), JSON.stringify(rdm));
+  ok(`Aa: testo a colonna (${rdm.n} paragrafi, ${rdm.h} titoli), carattere di partenza ${rdm.fs} px (media, 20), dentro lo schermo, sfondo carta`, rdm.n >= 9 && rdm.h >= 1 && rdm.fs === 20 && rdm.left >= 0 && rdm.right <= 390 && /^rgb\(251, 246, 236/.test(rdm.bg), JSON.stringify(rdm));
   ok('Aa: paragrafo intero e pulito (a capo riuniti)', /^Paragrafo 1\.1\. Il contratto prevede .* giorno dopo giorno\.$/.test(rdm.txt), rdm.txt);
   await shot(P, 'iphone-lettura');
   console.log('     lettura: scrollTop ' + await q(`document.getElementById('reader').scrollTop`) + ', menu misure in y=' + (await rect(P, '.rd-sizes')).y);
