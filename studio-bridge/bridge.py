@@ -45,7 +45,7 @@ import time
 import unicodedata
 import urllib.parse
 
-VERSION = '5'
+VERSION = '6'
 HOST = '127.0.0.1'  # fisso: dall'esterno si passa solo da Tailscale Serve
 HOME = os.environ.get('STUDIO_BRIDGE_HOME') or os.path.join(os.path.expanduser('~'), '.studio-bridge')
 
@@ -65,6 +65,8 @@ DEFAULTS = {
     'backup_mirror_match': [],
     'backup_mirror_keep': 10,  # copie tenute per quaderno nella cartella in più
     'save_answers': False,     # salva richiesta e risposta di ogni domanda in backup_dir/risposte/AAAA-MM-GG.jsonl (per rileggerle e confrontare i modelli)
+    'transcript_bin': '',      # vuoto = cerca `youtube_transcript_api` nel PATH e in ~/.local/bin (trascrizioni YouTube per Tubo)
+    'transcript_languages': ['it', 'en', 'de', 'fr', 'es'],
     'claude_bin': '',          # vuoto = cerca `claude` nel PATH e nei posti soliti
     'claude_models': ['sonnet', 'opus'],
     'claude_default': 'sonnet',
@@ -1609,6 +1611,36 @@ class BadRequest(Exception):
     pass
 
 
+# --- Trascrizioni YouTube (per Tubo): solo se sul Mac c'è youtube_transcript_api ---
+YT_ID_RE = re.compile(r'^[A-Za-z0-9_-]{11}$')
+
+
+def transcript_bin():
+    b = os.path.expanduser(CFG.get('transcript_bin') or '')
+    if b and os.access(b, os.X_OK):
+        return b
+    found = shutil.which('youtube_transcript_api')
+    if found:
+        return found
+    b = os.path.join(os.path.expanduser('~'), '.local', 'bin', 'youtube_transcript_api')
+    return b if os.access(b, os.X_OK) else ''
+
+
+def youtube_transcript(video_id):
+    """[{"t": secondi, "s": testo}, ...] nella prima lingua disponibile; None se il video non ha sottotitoli."""
+    b = transcript_bin()
+    if not b:
+        raise BadRequest('Trascrizioni non disponibili su questo Mac.')
+    langs = [x for x in CFG.get('transcript_languages') or [] if isinstance(x, str) and re.match(r'^[a-z]{2}(-[A-Za-z]{2})?$', x)] or ['en']
+    r = subprocess.run([b, video_id, '--languages', *langs, '--format', 'json'],
+                       capture_output=True, text=True, timeout=45)
+    if r.returncode or not r.stdout.strip().startswith('['):
+        return None
+    data = json.loads(r.stdout)
+    segs = data[0] if data and isinstance(data[0], list) else data
+    return [{'t': round(float(x.get('start', 0)), 1), 's': str(x.get('text', ''))} for x in segs if isinstance(x, dict)]
+
+
 def validate(body):
     if not isinstance(body, dict):
         raise BadRequest('Richiesta non valida.')
@@ -1737,6 +1769,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.guard():
                 self.sync_get(path)
             return
+        if path == '/trascrizione':
+            if self.guard():
+                qs = urllib.parse.parse_qs(self.path.split('?', 1)[1] if '?' in self.path else '')
+                vid = (qs.get('v') or [''])[0]
+                if not YT_ID_RE.match(vid):
+                    self.send_json(400, {'error': 'Video non valido.'})
+                    return
+                try:
+                    segs = youtube_transcript(vid)
+                except BadRequest as e:
+                    self.send_json(400, {'error': str(e)})
+                    return
+                except Exception as e:  # noqa: BLE001
+                    log('trascrizione %s: %s' % (vid, e))
+                    self.send_json(502, {'error': 'Trascrizione non riuscita.'})
+                    return
+                log('trascrizione %s -> %s' % (vid, '%d pezzi' % len(segs) if segs else 'nessuna'))
+                if not segs:
+                    self.send_json(404, {'error': 'Questo video non ha sottotitoli.'})
+                    return
+                self.send_json(200, {'ok': True, 'segmenti': segs})
+            return
         if path != '/health':
             self.send_json(404, {'error': 'Indirizzo sconosciuto.'})
             return
@@ -1754,6 +1808,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'gemma': dict(gemma_status(names), num_ctx=CFG['gemma_num_ctx']),  # l'app mostra Gemma solo se ok
             'web_gemma': web_ollama,
             'backup': {'ok': bool(bdir), 'max_mb': CFG['backup_max_mb']},  # dove salva non si dice
+            'trascrizione': {'ok': bool(transcript_bin())},
             'claude': {'ok': info['ok'], 'models': CFG['claude_models'], 'default': CFG['claude_default'], 'plan': info['plan'], 'error': info['error']},
             'web_claude': {'ok': info['ok'] and info['web'], 'error': '' if info['ok'] and info['web'] else info['error'] or MSG_OLD_CLAUDE_WEB},
             'web_qwen': web_ollama,
