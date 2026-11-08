@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { sleep, OUT } from './cdp.mjs';
-import { browser, device, rect, touch, tapXY, tap, reachable, pen, small, pixels } from './touch.mjs';
+import { reachableBar, barRow, browser, device, rect, touch, tapXY, tap, reachable, pen, small, pixels } from './touch.mjs';
 const require = createRequire(import.meta.url);
 const PDFLib = require(new URL('../lib/pdf-lib.min.js', import.meta.url).pathname);
 const APP = process.env.APP || 'http://localhost:8088/index.html';
@@ -257,10 +257,11 @@ try {
 
   // ======================= iPhone =======================
   await device(P, 390, 844, 3); await sleep(700);
-  const top = await rect(P, '#page-ind'), mid = await rect(P, '.pillbar.mid');
-  ok('iPhone: "150 di 300" in alto al centro', top.y < 70 && top.x > 100 && top.x + top.w < 290 && (await ind()) === '150 di 300', JSON.stringify(top) + ' ' + await ind());
-  for (const sel of ['#btn-back', '#btn-pages', '#page-ind', '#btn-save', '#btn-save-menu', '#tool-pen', '#btn-undo']) ok('iPhone: ' + sel + ' raggiungibile', await reachable(P, sel));
-  ok('iPhone: barre in alto senza sovrapposizioni', await P.eval(`const r=['.pillbar.left','#pagebar','.pillbar.right'].map(s=>document.querySelector(s).getBoundingClientRect()); return r[0].right<=r[1].left && r[1].right<=r[2].left && r[2].right<=390`));
+  const top = await rect(P, '#page-ind'), mid = { y: 844 }; // v21: niente barra in basso sull'iPhone
+  ok('iPhone: "150 di 300" in alto al centro', top.y < 70 && top.x > 80 && top.x + top.w < 290 && (await ind()) === '150 di 300', JSON.stringify(top) + ' ' + await ind());
+  for (const sel of ['#btn-back', '#btn-pages', '#page-ind', '#btn-save', '#btn-save-menu', '#tool-pen', '#btn-undo']) ok('iPhone: ' + sel + ' raggiungibile', await reachableBar(P, sel));
+  await P.eval(`document.querySelector('.toprow').scrollLeft=0; return 1`); await sleep(100);
+  ok('iPhone: barra in alto su una riga, pulsanti senza sovrapposizioni', await P.eval(`const bs=[...document.querySelectorAll('.toprow button')].filter(b=>b.getBoundingClientRect().width).map(b=>b.getBoundingClientRect()).sort((a,b)=>a.left-b.left); return bs.every((r,i)=>!i||bs[i-1].right<=r.left+0.5) && new Set(bs.map(r=>Math.round(r.top))).size===1`));
   ok('iPhone editor: comandi >= 44px', (await small(P)).length === 0, JSON.stringify(await small(P)));
   await shot(P, 'iphone-editor-300');
   await tap(P, '#page-ind'); await sleep(250);

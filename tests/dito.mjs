@@ -41,7 +41,7 @@ try {
   ok('gesto verticale: non disegna', (await strokes(P)) === 2, String(await strokes(P)));
   await P.eval('__penna.flush && __penna.flush()'); await P.reload?.();
   ok('scelta Dito salvata', await P.eval(`return localStorage.getItem('penna.finger')==='1'`));
-  ok('versione v19', await P.eval(`return __penna.version==='v19' || document.getElementById('app-ver').textContent==='v19'`));
+  ok('versione >= v19', await P.eval(`return +__penna.version.slice(1) >= 19`));
 } catch (e) { fail++; console.log('ERRORE', e.message); }
 console.log(`\nRISULTATO: ${pass}/${pass + fail} ok`);
 P.close?.(); process.exit(fail ? 1 : 0);

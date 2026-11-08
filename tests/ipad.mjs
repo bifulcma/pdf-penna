@@ -11,7 +11,7 @@ const SHOTS = OUT + '/shots'; fs.mkdirSync(SHOTS, { recursive: true });
 let pass = 0, fail = 0;
 const ok = (name, cond, extra = '') => { cond ? pass++ : fail++; console.log((cond ? 'OK   ' : 'FAIL ') + name + (!cond && extra !== '' ? '  — ' + extra : '')); };
 
-import { STRIP, browser, device, rect, touch, tapXY, tap, reachable, pen, strokes, small, pixels } from './touch.mjs';
+import { reachableBar, barRow, STRIP, browser, device, rect, touch, tapXY, tap, reachable, pen, strokes, small, pixels } from './touch.mjs';
 async function shot(P, name) { const r = await P.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(`${SHOTS}/${name}.png`, Buffer.from(r.data, 'base64')); }
 
 // ---------- PDF di prova: 5 pagine stampate da Chrome (font veri, foto JPEG, grafica vettoriale), una ruotata ----------
@@ -232,14 +232,15 @@ try {
   ok('iPhone libreria: comandi >= 44px', (await small(P)).length === 0, JSON.stringify(await small(P)));
   await P.eval(`const n=(await __penna.D.all('nodes')).find(n=>n.name==='multi'); await __penna.openNotebook(n.id); return 1`);
   await P.waitFor('document.querySelector(".page[data-rendered]")', 15000); await sleep(800);
-  const mid = await rect(P, '.pillbar.mid');
-  ok('iPhone: strumenti in basso, dentro lo schermo', mid.y > 700 && mid.y + mid.h <= 844 && mid.x >= 0 && mid.x + mid.w <= 390, JSON.stringify(mid));
-  for (const sel of ['#tool-pen', '#tool-hl', '#btn-color', '#btn-undo', '#btn-back', '#btn-save', '#page-ind']) ok('iPhone: ' + sel + ' raggiungibile', await reachable(P, sel));
+  const mid = await barRow(P); // v21: una sola barra in alto, scorrevole
+  ok('iPhone: barra unica in alto, larga quanto lo schermo', mid.y === 0 && mid.h <= 60 && mid.x >= 0 && mid.x + mid.w <= 390, JSON.stringify(mid));
+  for (const sel of ['#tool-pen', '#tool-hl', '#btn-color', '#btn-undo', '#btn-back', '#btn-save', '#page-ind']) ok('iPhone: ' + sel + ' raggiungibile', await reachableBar(P, sel));
+  await P.eval(`document.querySelector('.toprow').scrollLeft=0; return 1`);
   ok('iPhone editor: comandi >= 44px', (await small(P)).length === 0, JSON.stringify(await small(P)));
   await shot(P, 'iphone-editor');
   await tap(P, '#tool-hl'); await tap(P, '#tool-hl'); await sleep(250);
   const pr = await rect(P, '#pop');
-  ok('iPhone: pannello sopra la barra e dentro lo schermo', !(await P.eval(`return document.getElementById('pop').hidden`)) && pr.x >= 0 && pr.x + pr.w <= 390 && pr.y >= 0 && pr.y + pr.h < mid.y, JSON.stringify(pr));
+  ok('iPhone: pannello sotto la barra e dentro lo schermo', !(await P.eval(`return document.getElementById('pop').hidden`)) && pr.x >= 0 && pr.x + pr.w <= 390 && pr.y >= mid.y + mid.h && pr.y + pr.h <= 844, JSON.stringify(pr));
   ok('iPhone: colori >= 44px', (await small(P)).length === 0, JSON.stringify(await small(P)));
   await shot(P, 'iphone-popover');
   await tapXY(P, 200, 300);
@@ -252,7 +253,7 @@ try {
   ok('iPhone: tocco miniatura chiude la barra', await P.eval(`return !document.getElementById('notebook').classList.contains('side-open')`));
   await tap(P, '#tool-text'); await sleep(200);
   const sub = await rect(P, '#text-tools');
-  ok('iPhone: barra testo sopra gli strumenti, dentro lo schermo', sub.x >= 0 && sub.x + sub.w <= 390 && sub.y + sub.h <= mid.y, JSON.stringify(sub));
+  ok('iPhone: barra testo in basso, dentro lo schermo', sub.x >= 0 && sub.x + sub.w <= 390 && sub.y > mid.y + mid.h && sub.y + sub.h <= 844, JSON.stringify(sub));
   await shot(P, 'iphone-text');
   await tap(P, '#tool-pen');
 

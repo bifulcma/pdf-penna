@@ -80,7 +80,7 @@
     <div class="lib-title">
       <nav id="crumbs" hidden></nav>
       <h1 id="lib-title">I miei quaderni</h1>
-      <button id="btn-status" class="status" type="button"><span class="sync-chip"><i class="sync-dot"></i><span id="sync-short">Solo su questo iPad</span></span></button>
+      <button id="btn-status" class="status" type="button"><span class="sync-chip"><i class="sync-dot"></i><span id="sync-short">Solo su questo dispositivo</span></span></button>
     </div>
     <div class="lib-tools">
       <button id="btn-new-folder" class="ib soft" type="button" aria-label="Nuova cartella" title="Nuova cartella"><svg class="ic" aria-hidden="true"><use href="#i-folder-plus"/></svg></button>
@@ -133,6 +133,7 @@
       <button id="btn-next" class="ib" type="button" aria-label="Pagina successiva" title="Pagina successiva"><svg class="ic" aria-hidden="true"><use href="#i-down"/></svg></button>
       <button id="btn-bm" class="ib" type="button" aria-label="Segnalibro su questa pagina" title="Segnalibro su questa pagina"><svg class="ic" aria-hidden="true"><use href="#i-bookmark"/></svg></button>
       <button id="btn-notes" class="ib" type="button" aria-label="Commenti ed evidenziazioni" title="Commenti ed evidenziazioni"><svg class="ic" aria-hidden="true"><use href="#i-comment"/></svg></button>
+      <button id="btn-read" class="ib" type="button" aria-pressed="false" aria-label="Lettura: testo grande a colonna" title="Lettura: testo grande a colonna"><span class="aa">Aa</span></button>
       <button id="btn-ask" class="ib" type="button" aria-label="Chiedi sul PDF" title="Chiedi (spiega, riassumi, domande sul PDF)"><svg class="ic" aria-hidden="true"><use href="#i-spark"/></svg></button>
     </div>
    </div>
@@ -178,6 +179,17 @@
       </div>
     </aside>
     <div id="viewer"><div id="pages"></div></div>
+    <div id="reader" hidden role="region" aria-label="Lettura a colonna">
+      <div class="rd-top">
+        <div class="rd-sizes" role="group" aria-label="Grandezza del testo">
+          <button type="button" data-size="0" aria-label="Testo piccolo">A</button><button type="button" data-size="1" aria-label="Testo medio">A</button><button type="button" data-size="2" aria-label="Testo grande">A</button>
+        </div>
+        <span class="rd-tip">Tocca un paragrafo per evidenziarlo</span>
+      </div>
+      <button id="rd-prev" class="pill small" type="button"><svg class="ic" aria-hidden="true"><use href="#i-up"/></svg><span>Pagina precedente</span></button>
+      <div id="rd-body"></div>
+      <p id="rd-end" hidden>Fine del quaderno</p>
+    </div>
     <div id="scrub" aria-hidden="true"><div id="scrub-thumb"><i></i><i></i></div><div id="scrub-tip"><b id="scrub-pg"></b><span id="scrub-of"></span></div></div>
   </div>
 </section>
@@ -244,7 +256,7 @@
 <dialog id="settings">
   <div class="set-head"><h3>Impostazioni</h3><button id="set-close" class="ib soft" type="button" aria-label="Chiudi"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></button></div>
   <div class="group">
-    <div class="group-title">Sincronizzazione tra iPad</div>
+    <div class="group-title">Sincronizzazione tra i tuoi dispositivi</div>
     <div id="sync-box">
       <div class="row-status"><span class="sync-chip"><i class="sync-dot"></i><span id="sync-text">Solo su questo dispositivo</span></span></div>
       <p id="sync-help"></p>

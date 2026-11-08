@@ -4,8 +4,9 @@ import { buildNotebookPdf, LAYOUT, HL_ALPHA, STRIKE_Y } from './pdfexport.js';
 import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
+import * as R from './reader.js';
 
-const APP_VERSION = 'v20';
+const APP_VERSION = 'v21';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -437,7 +438,7 @@ async function nodeMenu(n, nodes) {
     const q = await modal({ title: 'Sposta “' + n.name + '” in…', options: [{ label: 'I miei quaderni (principale)', value: '', icon: 'book' }, ...folders.map((f) => ({ label: f.name, value: f.id, icon: 'folder' }))] });
     if (q) { n.parent = q.value || null; await D.saveNode(n); Sync.requestSync(); refreshLibrary(); }
   } else if (r.value === 'del') {
-    if (await confirmDlg('Eliminare “' + n.name + '”?', n.kind === 'folder' ? 'Verrà eliminato anche tutto quello che contiene.' : 'Il quaderno e le sue pagine verranno eliminati (anche dal Mac Studio e dagli altri iPad).')) {
+    if (await confirmDlg('Eliminare “' + n.name + '”?', n.kind === 'folder' ? 'Verrà eliminato anche tutto quello che contiene.' : 'Il quaderno e le sue pagine verranno eliminati (anche dal Mac Studio e dagli altri dispositivi).')) {
       await D.deleteNode(n); Sync.requestSync(); refreshLibrary();
     }
   }
@@ -549,13 +550,19 @@ try { const saved = JSON.parse(localStorage.getItem('penna.tools') || 'null'); i
 try { S.finger = localStorage.getItem('penna.finger') === '1'; } catch {}
 const saveTools = () => { try { localStorage.setItem('penna.tools', JSON.stringify({ pen: S.pen, hl: S.hl })); } catch {} };
 const cfg = () => S[S.tool === 'hl' || S.tool === 'select' ? 'hl' : 'pen'];
-const nb = { node: null, pages: [], zoom: 1, undo: [], redo: [], drawing: 0 };
+const nb = { node: null, pages: [], zoom: 1, undo: [], redo: [], drawing: 0, crop: null };
+// iPhone (anche in orizzontale): il lato corto dello schermo è sotto i 600 px. L'iPad (744 px e più) non cambia.
+const phone = () => Math.min(innerWidth, innerHeight) < 600;
+const paintPhone = () => document.body.classList.toggle('phone', phone());
+paintPhone();
 
 async function openNotebook(id, focusPageId) {
   const node = await D.get('nodes', id);
   if (!node || node.deleted) return;
   if (nb.node) { await flush(); saveLastPage(); }
   nb.node = node; nb.zoom = 1; nb.undo = []; nb.redo = []; updateUndoButtons();
+  nb.crop = null; closeReader(false);
+  if (phone()) { nb.crop = savedCrop(id); nb.zoom = savedZoom(id); }
   closePop(); resetFind(); endSel(); nb.scanToast = false;
   saveSt.dirty = false; saveSt.at = 0; paintSave();
   library.hidden = true; notebook.hidden = false;
@@ -565,6 +572,7 @@ async function openNotebook(id, focusPageId) {
   setSide(wide() && localStorage.getItem('penna.side') === '1', false);
   if (!(await buildPages())) return;
   viewer.scrollLeft = 0;
+  if (phone() && !nb.crop) await ensureCrop(node); // la prima volta: dove sta il testo (poi resta in memoria)
   let target = null;
   if (focusPageId) target = { i: nb.pages.findIndex((x) => x.rec.id === focusPageId), f: 0 };
   else {
@@ -578,6 +586,8 @@ async function openNotebook(id, focusPageId) {
     }
   }
   if (target && target.i >= 0) goToPage(target.i, target.f); else { viewer.scrollTop = 0; updatePageIndicator(); }
+  alignText();
+  if (phone()) readHint();
   setTimeout(() => openGuard(false), 8000);
 }
 // segno "sto aprendo": tolto appena una pagina è disegnata (o l'app va in secondo piano normalmente)
@@ -625,8 +635,10 @@ function fitWidth() {
   const cs = getComputedStyle(pagesEl);
   return Math.max(200, Math.min(1100, viewer.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)));
 }
+// iPhone: la pagina si allarga finché il TESTO (non il foglio) riempie la larghezza; i margini bianchi restano fuori a destra e a sinistra
+const cropScale = () => (phone() && nb.crop ? 1 / (nb.crop.r - nb.crop.l) : 1);
 function layout() {
-  const w = fitWidth() * nb.zoom;
+  const w = fitWidth() * nb.zoom * cropScale();
   nb.gap = topGap();
   for (const p of nb.pages) {
     p.cw = w; p.ch = w * p.aspect;
@@ -1538,6 +1550,7 @@ function setAnn(p, id, val) {
   if (val) list.push(annCopy(val));
   N.sortAnns(list);
   renderAnns(p); queueSave(p.rec); renderAnnList();
+  if (rd.open) paintReaderAnns(p);
 }
 // changes: [{ p, id, after }] (after null = elimina); un solo passo di Annulla
 function commitAnns(changes) {
@@ -2546,7 +2559,7 @@ viewer.addEventListener('touchmove', (e) => {
   e.preventDefault();
   const [a, b] = e.touches;
   const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-  const nz = Math.min(5, Math.max(0.5, pinch.z0 * d / pinch.d0));
+  const nz = Math.min(zMax(), Math.max(zMin(), pinch.z0 * d / pinch.d0));
   pinch.ratio = nz / pinch.z0;
   pagesEl.style.transform = 'scale(' + pinch.ratio + ')';
 }, { passive: false });
@@ -2556,10 +2569,12 @@ function endPinch() {
   pinch = null;
   pagesEl.style.transform = ''; pagesEl.style.transformOrigin = '0 0';
   if (Math.abs(ratio - 1) < 0.01) return;
-  nb.zoom = Math.min(5, Math.max(0.5, nb.zoom * ratio));
+  nb.zoom = Math.min(zMax(), Math.max(zMin(), nb.zoom * ratio));
   layout();
   viewer.scrollLeft = fx * ratio - cx + pagesEl.offsetLeft;
   viewer.scrollTop = fy * ratio - cy + pagesEl.offsetTop;
+  if (phone() && Math.abs(nb.zoom - 1) < 0.04) { nb.zoom = 1; layout(); alignText(); } // vicino alla misura «testo»: ci si aggancia
+  saveZoom();
 }
 viewer.addEventListener('touchend', (e) => { if (e.touches.length < 2) endPinch(); }, { passive: true });
 viewer.addEventListener('touchcancel', endPinch, { passive: true });
@@ -2571,9 +2586,99 @@ window.addEventListener('resize', () => {
   resizeTimer = setTimeout(() => {
     if (!nb.pages.length || notebook.hidden) return;
     const i = curIndex(), p = nb.pages[i], f = (viewer.scrollTop - (p.wrap.offsetTop - nb.gap)) / (p.ch || 1);
-    layout(); goToPage(i, f);
+    const was = document.body.classList.contains('phone');
+    paintPhone();
+    if (phone() !== was) { nb.zoom = phone() ? savedZoom(nb.node.id) : 1; nb.crop = phone() ? savedCrop(nb.node.id) : null; if (phone() && !nb.crop) ensureCrop(nb.node).then(() => { layout(); goToPage(i, f); alignText(); }); }
+    layout(); goToPage(i, f); alignText();
   }, 120);
 });
+
+// ---------- iPhone: margini tagliati, zoom ricordato, doppio tocco ----------
+const zMin = () => (phone() ? (nb.crop ? nb.crop.r - nb.crop.l : 1) : 0.5); // al minimo si vede tutto il foglio
+const zMax = () => (phone() ? 3 : 5);
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+function savedZoom(id) { const z = parseFloat(lsGet('penna.zoom.' + id)); return z > 0 ? Math.min(3, Math.max(0.3, z)) : 1; }
+function saveZoom() { if (phone() && nb.node) lsSet('penna.zoom.' + nb.node.id, String(Math.round(nb.zoom * 1000) / 1000)); }
+function savedCrop(id) {
+  try { const c = JSON.parse(lsGet('penna.crop.' + id)); return c && c.r > c.l ? c : null; } catch { return null; }
+}
+// dove sta il testo: righe delle prime pagine PDF (fino a 6 con testo), unite. Scansione senza testo: margini fissi del 5%.
+const cropBusy = new Map();
+function ensureCrop(node) {
+  if (cropBusy.has(node.id)) return cropBusy.get(node.id);
+  const job = (async () => {
+    const recs = nb.pages.map((p) => p.rec).filter((r) => r.type === 'pdf');
+    if (!recs.length) return;
+    const boxes = [];
+    let tried = 0;
+    for (const rec of recs) {
+      if (boxes.length >= 6 || tried >= 12) break;
+      tried++;
+      try {
+        const pdf = await getPdf(rec.blob), page = await pdf.getPage(rec.pdfPage + 1);
+        if (page.rotate % 180 === 0) { const tc = await page.getTextContent(); boxes.push(R.textBox(R.lines(tc.items), page.view)); }
+        page.cleanup();
+      } catch {}
+    }
+    const c = boxes.some(Boolean) ? R.cropOf(boxes) : { l: 0.05, r: 0.95 };
+    const val = c || { l: 0, r: 1 };
+    lsSet('penna.crop.' + node.id, JSON.stringify(val));
+    if (nb.node === node && phone()) { nb.crop = val; nb.zoom = Math.max(zMin(), nb.zoom); layout(); }
+  })().catch(() => {}).finally(() => cropBusy.delete(node.id));
+  cropBusy.set(node.id, job);
+  // al massimo 2,5 s di attesa all'apertura: se il PDF è lento, la pagina si adatta appena il conto è pronto
+  return Promise.race([job, new Promise((r) => setTimeout(r, 2500))]);
+}
+// a misura «testo»: l'inizio delle righe va al bordo sinistro dello schermo
+function alignText() {
+  if (!phone() || !nb.crop || !nb.pages.length) return;
+  viewer.scrollLeft = nb.crop.l * nb.pages[0].cw;
+}
+function zoomTo(nz, cx, cy, anim = true) {
+  nz = Math.min(zMax(), Math.max(zMin(), nz));
+  if (Math.abs(nz - nb.zoom) < 0.01) return;
+  const ratio = nz / nb.zoom, fx = viewer.scrollLeft + cx - pagesEl.offsetLeft, fy = viewer.scrollTop + cy - pagesEl.offsetTop;
+  const done = () => {
+    pagesEl.style.transition = ''; pagesEl.style.transform = ''; pagesEl.style.transformOrigin = '0 0';
+    nb.zoom = nz; layout();
+    viewer.scrollTop = fy * ratio - cy + pagesEl.offsetTop;
+    if (Math.abs(nz - 1) < 0.01) alignText(); else viewer.scrollLeft = fx * ratio - cx + pagesEl.offsetLeft;
+    saveZoom();
+  };
+  if (!anim || matchMedia('(prefers-reduced-motion: reduce)').matches) { done(); return; }
+  pagesEl.style.transformOrigin = fx + 'px ' + fy + 'px';
+  pagesEl.style.transition = 'transform .2s cubic-bezier(.2,.8,.2,1)';
+  pagesEl.style.transform = 'scale(' + ratio + ')';
+  setTimeout(done, 210);
+}
+// doppio tocco col dito (iPhone): ingrandisci il punto toccato (2×) / torna a misura testo
+let tap1 = null, tapDown = null;
+viewer.addEventListener('touchstart', (e) => {
+  tapDown = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: performance.now(), moved: false } : null;
+  if (e.touches.length > 1) tap1 = null;
+}, { passive: true });
+viewer.addEventListener('touchmove', (e) => { if (tapDown && e.touches.length === 1 && Math.hypot(e.touches[0].clientX - tapDown.x, e.touches[0].clientY - tapDown.y) > 12) tapDown.moved = true; }, { passive: true });
+viewer.addEventListener('touchend', (e) => {
+  const d = tapDown; tapDown = null;
+  if (!d || d.moved || e.touches.length || !phone() || nb.drawing || performance.now() - d.t > 350) { if (!d || d.moved) tap1 = null; return; }
+  if (S.tool === 'text' || S.tool === 'select' || (e.target.closest && e.target.closest('textarea, button, input, .ann-pin, .img'))) { tap1 = null; return; }
+  const now = performance.now();
+  if (tap1 && now - tap1.t < 330 && Math.hypot(d.x - tap1.x, d.y - tap1.y) < 36) {
+    tap1 = null;
+    if (e.cancelable) e.preventDefault();
+    const rect = viewer.getBoundingClientRect();
+    zoomTo(nb.zoom > 1.15 ? 1 : 2, d.x - rect.left, d.y - rect.top);
+    return;
+  }
+  tap1 = { x: d.x, y: d.y, t: now };
+}, { passive: false });
+// testo ancora piccolo (A4 fitto, iPhone in verticale): una volta sola si suggerisce «Aa»
+function readHint() {
+  if (lsGet('penna.readHint') || !nb.pages.some((p) => p.rec.type === 'pdf')) return;
+  lsSet('penna.readHint', '1');
+  setTimeout(() => { if (!notebook.hidden && !rd.open) toast('Per leggere con il testo grande tocca «Aa». Due dita o doppio tocco per ingrandire.', 5000); }, 900);
+}
 
 // ---------- Disegno ----------
 const widthFactor = (t) => (t === 'hl' ? 0.005 : 0.0007);
@@ -2990,8 +3095,124 @@ const justClosed = () => Date.now() - popClosedAt < 500;
 popBack.addEventListener('pointerdown', (e) => { e.preventDefault(); closePop(); popClosedAt = Date.now(); });
 paintColorChip();
 
+// ---------- Modalità lettura («Aa», iPhone): il testo del PDF in colonna, carattere grande ----------
+// Tocco su un paragrafo = evidenziato (un'evidenziazione vera sulla pagina: si vede anche sul foglio e si sincronizza).
+const rd = { open: false, from: 0, to: -1, cache: new Map(), obs: null, loading: false };
+const RD_SIZES = [17, 20, 24];
+const readerEl = $('reader'), rdBody = $('rd-body');
+const rdSize = () => { const v = +lsGet('penna.rdSize'); return v >= 0 && v <= 2 ? v : 1; };
+function paintRdSize() {
+  readerEl.style.setProperty('--rd-fs', RD_SIZES[rdSize()] + 'px');
+  readerEl.querySelectorAll('.rd-sizes button').forEach((b) => { const on = +b.dataset.size === rdSize(); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+}
+readerEl.querySelectorAll('.rd-sizes button').forEach((b) => { b.onclick = () => {
+  const top = rdTopPara(); lsSet('penna.rdSize', b.dataset.size); paintRdSize(); if (top) top.scrollIntoView({ block: 'start' });
+}; });
+// paragrafi di una pagina, con i riquadri delle righe in frazioni della pagina (come le evidenziazioni fatte con Seleziona)
+async function readerData(p) {
+  if (rd.cache.has(p.rec.id)) return rd.cache.get(p.rec.id);
+  let out = { paras: [], scan: false, notes: p.rec.type !== 'pdf' };
+  if (p.rec.type === 'pdf') {
+    const pdf = await getPdf(p.rec.blob), page = await pdf.getPage(p.rec.pdfPage + 1);
+    const tc = await page.getTextContent(), vp = page.getViewport({ scale: 1 });
+    const r4 = (v) => Math.round(v * 10000) / 10000;
+    const paras = R.paragraphs(R.lines(tc.items)).map((g) => {
+      const rects = g.lines.map((l) => {
+        const [x0, y0, x1, y1] = R.lineBox(l), [m0, m1, m2, m3, m4, m5] = vp.transform; // punto del PDF → punto della pagina (anche ruotata)
+        const a = m0 * x0 + m2 * y0 + m4, b = m1 * x0 + m3 * y0 + m5, c = m0 * x1 + m2 * y1 + m4, d = m1 * x1 + m3 * y1 + m5;
+        const L = Math.max(0, Math.min(a, c) / vp.width), T = Math.max(0, Math.min(b, d) / vp.height);
+        return { l: r4(L), t: r4(T), w: r4(Math.min(1, Math.max(a, c) / vp.width) - L), h: r4(Math.min(1, Math.max(b, d) / vp.height) - T) };
+      }).filter((r) => r.w > 0 && r.h > 0);
+      return { text: g.text, quote: N.cleanQuote(normText(g.text)), heading: g.heading, rects };
+    }).filter((g) => g.quote && g.rects.length);
+    page.cleanup();
+    out = { paras, scan: !paras.length, notes: false };
+  }
+  rd.cache.set(p.rec.id, out);
+  return out;
+}
+const overlaps = (a, b) => a.l < b.l + b.w && b.l < a.l + a.w && a.t < b.t + b.h && b.t < a.t + a.h;
+function paintReaderAnns(p) {
+  const sec = rdBody.querySelector('.rd-page[data-id="' + p.rec.id + '"]'), data = rd.cache.get(p.rec.id);
+  if (!sec || !data) return;
+  const anns = (p.rec.anns || []).filter((a) => !N.isFix(a));
+  sec.querySelectorAll('.rd-p').forEach((el2) => {
+    const g = data.paras[+el2.dataset.k];
+    const whole = anns.find((a) => a.q === g.quote);
+    const part = !whole && anns.find((a) => (a.r || []).some((r) => g.rects.some((q) => overlaps(r, q))));
+    el2.classList.toggle('on', !!whole); el2.classList.toggle('part', !!part);
+    el2.style.setProperty('--hl', whole ? alpha(whole.c, 0.38) : part ? alpha(part.c, 0.9) : 'transparent');
+    el2.setAttribute('aria-pressed', whole ? 'true' : 'false');
+  });
+}
+function readerTap(p, k) {
+  const g = rd.cache.get(p.rec.id).paras[k];
+  const old = (p.rec.anns || []).find((a) => !N.isFix(a) && a.q === g.quote);
+  if (old) { commitAnns([{ p, id: old.id, after: null }]); toast('Evidenziazione tolta'); return; }
+  const now = Date.now();
+  const a = { id: D.uid(), q: g.quote, c: S.hl.color, a: Math.max(0.2, Math.min(0.6, S.hl.alpha)), r: N.mergeRects(g.rects), t: now, u: now };
+  commitAnns([{ p, id: a.id, after: a }]);
+  toast('Evidenziato (anche sulla pagina)');
+}
+async function readerPage(i, before) {
+  const p = nb.pages[i];
+  if (!p) return null;
+  const data = await readerData(p);
+  const sec = el('section', 'rd-page'); sec.dataset.id = p.rec.id; sec.dataset.i = String(i);
+  sec.append(el('div', 'rd-pg', 'Pagina ' + (i + 1) + ' di ' + nb.pages.length));
+  if (data.notes) sec.append(el('p', 'rd-note', 'Pagina di appunti: si legge nella vista normale.'));
+  else if (data.scan) sec.append(el('p', 'rd-note', 'Questa pagina è una scansione: non c’è testo da mostrare. Torna alla pagina con «Aa».'));
+  data.paras.forEach((g, k) => {
+    const e = el(g.heading ? 'h3' : 'p', 'rd-p' + (g.heading ? ' rd-h' : ''), g.text); e.dataset.k = String(k);
+    e.setAttribute('role', 'button'); e.tabIndex = 0;
+    e.onclick = () => readerTap(p, k);
+    sec.append(e);
+  });
+  if (before) { const h0 = readerEl.scrollHeight; rdBody.prepend(sec); readerEl.scrollTop += readerEl.scrollHeight - h0; } else rdBody.append(sec);
+  paintReaderAnns(p);
+  return sec;
+}
+async function readerMore() {
+  if (rd.loading || !rd.open || rd.to >= nb.pages.length - 1) return;
+  rd.loading = true;
+  try { for (let n = 0; n < 2 && rd.to < nb.pages.length - 1; n++) { rd.to++; await readerPage(rd.to); } } catch (e) { showError('Lettura', e); }
+  rd.loading = false;
+  $('rd-end').hidden = rd.to < nb.pages.length - 1;
+  // se lo schermo non è ancora pieno, carico ancora
+  if (rd.open && readerEl.scrollHeight - readerEl.scrollTop - readerEl.clientHeight < 600) readerMore();
+}
+$('rd-prev').onclick = async () => {
+  if (rd.from <= 0) return;
+  rd.from--; await readerPage(rd.from, true);
+  $('rd-prev').hidden = rd.from <= 0;
+};
+function rdTopPara() {
+  const top = readerEl.querySelector('.rd-top').getBoundingClientRect().bottom + 1; // sotto la barretta A A A
+  return [...rdBody.querySelectorAll('.rd-p, .rd-pg')].find((x) => x.getBoundingClientRect().bottom > top) || null;
+}
+async function openReader() {
+  if (rd.open || !nb.pages.length) return;
+  if (!nb.pages.some((p) => p.rec.type === 'pdf')) { toast('La lettura a colonna serve per le pagine dei PDF'); return; }
+  closePop(); endSel();
+  rd.open = true; rd.from = rd.to = Math.max(0, curIndex()); rdBody.textContent = '';
+  readerEl.hidden = false; notebook.classList.add('reading'); $('btn-read').classList.add('active'); $('btn-read').setAttribute('aria-pressed', 'true');
+  paintRdSize(); readerEl.scrollTop = 0;
+  $('rd-prev').hidden = rd.from <= 0; $('rd-end').hidden = true;
+  try { await readerPage(rd.from); } catch (e) { showError('Lettura', e); }
+  readerMore();
+}
+function closeReader(jump = true) {
+  if (!rd.open) return;
+  const t = jump && rdTopPara(), sec = t && t.closest('.rd-page');
+  rd.open = false; readerEl.hidden = true; rdBody.textContent = ''; rd.cache.clear();
+  notebook.classList.remove('reading'); $('btn-read').classList.remove('active'); $('btn-read').setAttribute('aria-pressed', 'false');
+  if (sec) { goToPage(+sec.dataset.i); alignText(); }
+}
+readerEl.addEventListener('scroll', () => { if (readerEl.scrollHeight - readerEl.scrollTop - readerEl.clientHeight < 900) readerMore(); }, { passive: true });
+$('btn-read').onclick = () => (rd.open ? closeReader() : openReader());
+
 async function closeNotebook() {
-  closePop(); endSel(); closeAsk();
+  closePop(); endSel(); closeAsk(); closeReader(false);
   await flush();
   saveLastPage();
   D.setMeta('open', null).catch(() => {});
@@ -3066,7 +3287,7 @@ function renderSync() {
   document.querySelectorAll('.sync-chip').forEach((c) => { c.dataset.state = st.state; });
   $('btn-sync').hidden = !conn; $('btn-signout').hidden = true; $('btn-onedrive').hidden = true;
   $('btn-sync').disabled = st.state === 'syncing';
-  $('sync-help').textContent = conn ? 'Ogni iPad collegato allo stesso Mac Studio salva lì le modifiche e prende quelle degli altri, ogni minuto e quando riapri l’app. Per ogni pagina vince l’ultima modifica.'
+  $('sync-help').textContent = conn ? 'Ogni dispositivo (iPad, iPhone) collegato allo stesso Mac Studio salva lì le modifiche e prende quelle degli altri, ogni minuto e quando riapri l’app. Per ogni pagina vince l’ultima modifica.'
     : 'Collega il Mac Studio qui sotto (Assistente: indirizzo e token): i quaderni si sincronizzano tra tutti gli iPad collegati.';
   $('sync-about').textContent = conn ? ' e copiati sul Mac Studio' : '';
 }
@@ -3142,4 +3363,4 @@ async function resumeLast() {
 // Appigli per i test automatici
 window.__penna = { D, Sync, S, nb, lib, openNotebook, refreshLibrary, exportBytes, flush, buildPages, setTool, runSearch, pdfjs, thumbUrl, version: APP_VERSION,
   goToPage, curIndex, saveNow, saveSt, copyNotebook, runFind, closeNotebook, want, stats: () => ({ rendering, want: want.size, drawn: nb.pages.filter((p) => p.bg.width > 0).length, textLayers: tlPages.size }),
-  N, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };
+  N, R, rd, openReader, closeReader, zoomTo, phone, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };

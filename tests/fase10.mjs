@@ -83,7 +83,8 @@ try {
   await device(P, 1180, 820);
   await P.goto(APP); await P.waitFor('window.__penna && document.getElementById("btn-new-nb")');
   await P.eval(SEL_FN + '; return 1');
-  ok('app v14 (Safari vecchio emulato, polyfill attivi) e service worker v14', await P.eval(`return __penna.version==='v16' && window.__stripped===true`) && /const VERSION = 'v16'/.test(await P.eval(`return await (await fetch('sw.js',{cache:'no-store'})).text()`)));
+  { const v = await P.eval(`return __penna.version`); // app e service worker con la stessa versione (>= v13)
+    ok('app ' + v + ' (Safari vecchio emulato, polyfill attivi) e service worker ' + v, +v.slice(1) >= 13 && await P.eval(`return window.__stripped===true`) && (await P.eval(`return await (await fetch('sw.js',{cache:'no-store'})).text()`)).includes(`const VERSION = '${v}'`)); }
 
   await P.setFiles('#pdf-input', [OUT + '/bozze.pdf']);
   await P.waitFor(`!document.getElementById('notebook').hidden && __penna.nb.pages[0] && __penna.nb.pages[0].wrap.dataset.rendered==='1'`, 20000, 'PDF aperto');

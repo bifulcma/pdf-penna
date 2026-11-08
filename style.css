@@ -803,6 +803,66 @@ dialog p:empty { display: none; }
   .fld-row { grid-template-columns: 1fr; }
   #errbox { bottom: calc(var(--sb) + 84px); }
 }
+/* ============ Lettura su iPhone (v21): tasto «Aa» e testo del PDF a colonna ============ */
+#btn-read { display: none; }
+body.phone #btn-read { display: inline-flex; }
+#btn-read .aa { font: 650 18px/1 'Iowan Old Style', Georgia, serif; letter-spacing: -.02em; }
+#btn-read.active { background: var(--accent-soft); color: var(--accent); }
+#reader { position: absolute; inset: 0; z-index: 27; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  background: #FBF6EC; color: #2B2623; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  padding: calc(var(--st) + 76px) calc(var(--sr) + 18px) calc(var(--sb) + 110px) calc(var(--sl) + 18px); }
+#reader > * { max-width: 34em; margin-left: auto; margin-right: auto; }
+.rd-top { position: sticky; top: -6px; z-index: 2; display: flex; align-items: center; gap: 12px; margin-bottom: 6px; padding: 6px 0; background: #FBF6EC; }
+.rd-sizes { display: inline-flex; flex: none; padding: 2px; border-radius: 13px; background: rgba(43, 38, 35, .07); }
+.rd-sizes button { width: 44px; height: 44px; border: 0; border-radius: 11px; background: transparent; color: #2B2623; font-family: 'Iowan Old Style', Georgia, serif; line-height: 1; }
+.rd-sizes button:nth-child(1) { font-size: 14px; }
+.rd-sizes button:nth-child(2) { font-size: 18px; }
+.rd-sizes button:nth-child(3) { font-size: 23px; }
+.rd-sizes button.on { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .14); }
+.rd-tip { font-size: 13px; line-height: 1.3; color: #857A70; }
+#rd-prev { display: flex; margin-top: 8px; margin-bottom: 4px; }
+#reader .rd-pg { margin-top: 22px; margin-bottom: 12px; text-align: center; font-size: 12px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: #9A8E84; }
+.rd-p { margin: 0 -6px .7em; padding: 3px 6px; border-radius: 6px; font-family: 'Iowan Old Style', 'Palatino', Georgia, serif; font-size: var(--rd-fs, 20px); line-height: 1.55;
+  overflow-wrap: break-word; -webkit-hyphens: auto; hyphens: auto; cursor: pointer; transition: background-color .15s, box-shadow .15s; }
+.rd-p.on { background: var(--hl); }
+.rd-p.part { box-shadow: inset 4px 0 0 var(--hl); }
+.rd-p:active { background: rgba(43, 38, 35, .06); }
+.rd-p.on:active { background: var(--hl); }
+.rd-h { font-size: calc(var(--rd-fs, 20px) * 1.2); font-weight: 650; line-height: 1.3; margin-top: .5em; }
+.rd-note { color: #857A70; font-style: italic; font-size: 16px; }
+#notebook.reading #scrub { display: none; }
+#reader .rd-p, #reader .rd-pg { scroll-margin-top: 66px; } /* «portato in cima»: non finisce sotto la barretta A A A */
+#rd-end { text-align: center; color: #9A8E84; font-size: 14px; margin-top: 28px; }
+
+/* ============ iPhone in verticale (v21): una sola barra in alto, scorrevole; le pagine cominciano sotto ============ */
+@media (max-width: 600px) {
+  .toprow { display: flex; flex-wrap: nowrap; align-items: center; gap: 0; pointer-events: auto; overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; scrollbar-width: none;
+    height: calc(var(--st) + 52px); padding: var(--st) calc(var(--sr) + 4px) 0 calc(var(--sl) + 4px);
+    background: var(--glass); -webkit-backdrop-filter: saturate(1.6) blur(18px); backdrop-filter: saturate(1.6) blur(18px);
+    border-bottom: 1px solid var(--line); }
+  .toprow::-webkit-scrollbar { display: none; }
+  .toprow > .pillbar, .toprow > #pagebar, .toprow > .pillbar.mid, .toprow > .pillbar.right { display: contents; }
+  .toprow .ib, .toprow .pillbar.mid .ib, .toprow #page-ind, .toprow .savebtn { flex: none; width: 44px; height: 44px; }
+  .toprow .sep { display: none; }
+  #btn-find, #btn-prev, #btn-next, #btn-bm, #btn-notes { display: inline-flex; }
+  /* ordine: Quaderni · Pagine · Aa · pagina · strumenti · Chiedi · Salva … (le prime cose stanno sempre nello schermo) */
+  #btn-back { order: 1; } #btn-pages { order: 2; } #btn-read { order: 3; } #page-ind { order: 4; }
+  #tool-pen { order: 10; } #tool-hl { order: 11; } #tool-select { order: 12; } #tool-eraser { order: 13; } #tool-text { order: 14; }
+  #btn-finger { order: 15; } #btn-color { order: 16; } #btn-undo { order: 17; } #btn-redo { order: 18; }
+  #btn-ask { order: 20; } #btn-find { order: 21; } #btn-notes { order: 22; } #btn-bm { order: 23; } #btn-prev { order: 24; } #btn-next { order: 25; }
+  #save-state { order: 30; position: static; width: 18px; min-width: 0; height: 44px; padding: 0; justify-content: center; flex: none; }
+  .toprow .savebtn { order: 31; margin: 0 2px; }
+  #btn-save-menu { order: 32; }
+  #page-ind { width: auto; min-width: 58px; padding: 0 8px; font-size: 14.5px; }
+  #nb-body { top: calc(var(--st) + 52px); }
+  #pages { padding: 10px calc(var(--sr) + 10px) calc(var(--sb) + 28px) calc(var(--sl) + 10px); }
+  #sidebar { top: 8px; bottom: calc(var(--sb) + 12px); }
+  #scrub { top: 8px; bottom: calc(var(--sb) + 14px); }
+  .pillbar.sub { bottom: calc(var(--sb) + 12px); }
+  #reader { padding-top: 6px; padding-bottom: calc(var(--sb) + 40px); }
+  #errbox { bottom: calc(var(--sb) + 16px); }
+}
 @media (hover: hover) {
   .card .cover:hover { box-shadow: var(--shadow-3); }
   .ib:not(:disabled):hover { background: var(--surface-2); }

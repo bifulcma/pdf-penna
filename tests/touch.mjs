@@ -51,6 +51,10 @@ export async function tapXY(P, x, y) { await touch(P, 'touchStart', x, y); await
 export async function tap(P, sel) { const r = await rect(P, sel); if (!r) throw new Error('manca ' + sel); await tapXY(P, r.cx, r.cy); }
 // il punto centrale del pulsante deve essere davvero il pulsante (non coperto da canvas/barre)
 export const reachable = (P, sel) => P.eval(`const e=document.querySelector(${JSON.stringify(sel)}); const r=e.getBoundingClientRect(); const h=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2); return !!h && (h===e || e.contains(h))`);
+// iPhone (v21): la barra è una sola riga scorrevole; prima di toccare un pulsante lo si porta in vista, come farebbe il dito
+export async function reachableBar(P, sel) { await P.eval(`const e=document.querySelector(${JSON.stringify(sel)}); if(e&&e.closest('.toprow')) e.scrollIntoView({inline:'nearest',block:'nearest'}); return 1`); await sleep(120); return reachable(P, sel); }
+// barra in alto dell'iPhone: riquadro della riga (i gruppi di pulsanti lì non hanno più un riquadro proprio)
+export const barRow = (P) => rect(P, '.toprow');
 export async function pen(P, pts) {
   const [x0, y0] = pts[0];
   await P.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: x0, y: y0, button: 'left', buttons: 1, clickCount: 1, pointerType: 'pen', force: 0.6 });

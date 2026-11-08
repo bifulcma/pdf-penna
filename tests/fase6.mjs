@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { sleep, OUT } from './cdp.mjs';
-import { browser, device, rect, touch, tapXY, tap, reachable, pen, small } from './touch.mjs';
+import { reachableBar, barRow, browser, device, rect, touch, tapXY, tap, reachable, pen, small } from './touch.mjs';
 import { ALIGN_FN } from './align.mjs';
 import { startMock } from './mock.mjs';
 const require = createRequire(import.meta.url);
@@ -367,9 +367,10 @@ try {
   await P.eval(`const c=[...document.querySelectorAll('.card')].find(c=>c.querySelector('b').textContent==='reale'); c.querySelector('.cover').click(); return 1`);
   await P.waitFor(`!document.getElementById('notebook').hidden && __penna.nb.node.name==='reale' && __penna.nb.pages[0].wrap.dataset.rendered==='1'`, 15000, 'iPhone apertura');
   await P.eval('__penna.goToPage(0); return 1'); await sleep(300);
-  const mid = await rect(P, '.pillbar.mid');
-  ok('iPhone: barra strumenti (con Seleziona) dentro lo schermo', mid.x >= 0 && mid.x + mid.w <= 390 && mid.y + mid.h <= 844, JSON.stringify(mid));
-  for (const sel of ['#tool-pen', '#tool-hl', '#tool-select', '#tool-text', '#btn-color', '#btn-undo', '#btn-redo']) ok('iPhone: ' + sel + ' raggiungibile', await reachable(P, sel));
+  const bar = await barRow(P), mid = { y: 844 }; // v21: una sola barra in alto, scorrevole
+  ok('iPhone: barra strumenti (con Seleziona) dentro lo schermo', bar.x >= 0 && bar.x + bar.w <= 390 && bar.y === 0, JSON.stringify(bar));
+  for (const sel of ['#tool-pen', '#tool-hl', '#tool-select', '#tool-text', '#btn-color', '#btn-undo', '#btn-redo']) ok('iPhone: ' + sel + ' raggiungibile', await reachableBar(P, sel));
+  await P.eval(`document.querySelector('.toprow').scrollLeft=0; return 1`); await sleep(100);
   await tap(P, '#tool-pen'); await sleep(150);
   await tap(P, '#tool-select');
   await P.waitFor(`__penna.nb.pages[0].tl && __penna.nb.pages[0].tl.end`, 10000, 'iPhone livello');
@@ -377,7 +378,7 @@ try {
   await select(0, 'Corsivo: efficienza, affinità');
   const im = await rect(P, '#selmenu');
   ok('iPhone: con Seleziona nessun pannello aperto per sbaglio', await P.eval(`return document.getElementById('pop').hidden`));
-  ok('iPhone: menu sulla selezione dentro lo schermo, sopra la barra strumenti', im.x >= 0 && im.x + im.w <= 390 && im.y > 60 && im.y + im.h <= mid.y, JSON.stringify(im));
+  ok('iPhone: menu sulla selezione dentro lo schermo, sopra la barra strumenti', im.x >= 0 && im.x + im.w <= 390 && im.y > bar.y + bar.h && im.y + im.h <= mid.y, JSON.stringify(im));
   ok('iPhone: pulsanti del menu >= 44px e parole non tagliate', (await small(P)).length === 0 && await P.eval(`return [...document.querySelectorAll('#selmenu button')].every(b=>b.scrollWidth<=b.clientWidth+1)`), JSON.stringify(await small(P)));
   await shot(P, 'iphone-selezione-menu');
   await tapMenu('note');
