@@ -53,6 +53,8 @@ DEFAULTS = {
     'port': 8787,
     'allowed_origins': ['https://bifulcma.github.io'],
     'ollama_url': 'http://127.0.0.1:11434',
+    'nemotron_model': 'nemotron35:latest', # modello Nemotron per risposte locali
+    'nemotron_num_ctx': 65536,
     'qwen_model': '',          # vuoto = il primo modello di Ollama che contiene "qwen"
     'qwen_num_ctx': 16384,     # contesto di Ollama (il suo predefinito è piccolo e taglierebbe i testi lunghi)
     'gemma_model': '',         # vuoto = il primo modello di Ollama che contiene "gemma" (niente embedding)
@@ -151,6 +153,7 @@ CHILDREN_LOCK = threading.Lock()
 EMPTY_DIR = os.path.join(HOME, 'vuota')  # cartella vuota: `claude` parte da qui, senza progetti né file intorno
 
 MSG_OLLAMA_DOWN = 'Ollama non risponde sul Mac Studio: apri l’app Ollama (o scrivi «ollama serve» nel Terminale).'
+MSG_NO_NEMOTRON = 'In Ollama non c’è un modello Nemotron: sul Mac Studio scrivi nel Terminale «ollama run nemotron35».'
 MSG_NO_QWEN = 'In Ollama non c’è un modello Qwen: sul Mac Studio scrivi nel Terminale «ollama pull qwen3».'
 MSG_NO_GEMMA = 'In Ollama non c’è un modello Gemma: sul Mac Studio scrivi nel Terminale «ollama pull gemma3».'
 MSG_NO_CLAUDE = 'Sul Mac Studio non trovo il comando «claude» (Claude Code): installalo e fai il login con il tuo abbonamento.'
@@ -748,6 +751,19 @@ def qwen_status(names=None):
     if want and want not in names:
         default = next((n for n in names if 'qwen' in n.lower()), '')
     return {'ok': bool(default), 'models': names, 'default': default, 'error': '' if default else MSG_NO_QWEN}
+
+
+def nemotron_status(names=None):
+    """{'ok', 'models', 'default', 'error'}: i modelli Nemotron di Ollama, per la sorgente Nemotron."""
+    names = ollama_names() if names is None else names
+    if names is None:
+        return {'ok': False, 'models': [], 'default': '', 'error': MSG_OLLAMA_DOWN}
+    nemo = [n for n in names if 'nemotron' in n.lower()]
+    want = CFG.get('nemotron_model', 'nemotron35:latest')
+    if want in names and want not in nemo:
+        nemo.append(want)
+    default = want if want in names else (nemo[0] if nemo else '')
+    return {'ok': bool(default), 'models': nemo, 'default': default, 'error': '' if default else MSG_NO_NEMOTRON}
 
 
 def make_room(model):
@@ -1645,8 +1661,8 @@ def validate(body):
     if not isinstance(body, dict):
         raise BadRequest('Richiesta non valida.')
     provider = body.get('provider')
-    if provider not in ('qwen', 'gemma', 'claude', 'argon'):
-        raise BadRequest('Sorgente sconosciuta: scegli Qwen, Gemma, Claude o Argon.')
+    if provider not in ('nemotron', 'qwen', 'gemma', 'claude', 'argon'):
+        raise BadRequest('Sorgente sconosciuta: scegli Nemotron, Claude o Argon.')
     system = body.get('system') or ''
     if not isinstance(system, str) or len(system) > MAX_SYSTEM or '\x00' in system:
         raise BadRequest('Istruzioni di sistema non valide.')
@@ -1804,6 +1820,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         bdir = backup_dir()
         self.send_json(200, {
             'ok': True, 'version': VERSION,
+            'nemotron': dict(nemotron_status(names), num_ctx=CFG['nemotron_num_ctx']),
             'qwen': dict(qwen_status(names), num_ctx=CFG['qwen_num_ctx']),  # l'app sceglie quanto testo mandare
             'gemma': dict(gemma_status(names), num_ctx=CFG['gemma_num_ctx']),  # l'app mostra Gemma solo se ok
             'web_gemma': web_ollama,
@@ -1941,13 +1958,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         t0 = time.time()
         try:
-            if provider in ('qwen', 'gemma'):
-                st = qwen_status() if provider == 'qwen' else gemma_status()
+            if provider in ('nemotron', 'qwen', 'gemma'):
+                if provider == 'nemotron':
+                    st = nemotron_status()
+                    lbl = 'Nemotron'
+                elif provider == 'qwen':
+                    st = qwen_status()
+                    lbl = 'Qwen'
+                else:
+                    st = gemma_status()
+                    lbl = 'Gemma'
                 if not st['ok']:
                     self.send_json(503, {'error': st['error']})
                     return
                 model = model or st['default']
-                if model not in st['models']:
+                if model not in st['models'] and model != st['default']:
                     self.send_json(400, {'error': 'In Ollama non c’è il modello «%s».' % model[:60]})
                     return
                 key = tavily_key() if web else ''
@@ -1957,7 +1982,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if provider == 'gemma':
                     make_room(model)
                 job = QwenJob(model, system, messages, dict(wopt, key=key) if web else None,
-                              num_ctx=CFG[provider + '_num_ctx'], label='Gemma' if provider == 'gemma' else 'Qwen')
+                              num_ctx=CFG.get(provider + '_num_ctx', 65536), label=lbl)
             elif provider == 'argon':
                 st = argon_status()
                 if not st['ok']:
