@@ -1,12 +1,12 @@
 import * as D from './db.js';
 import * as Sync from './sync.js';
-import { buildNotebookPdf, LAYOUT, HL_ALPHA, STRIKE_Y } from './pdfexport.js';
+import { buildNotebookPdf, LAYOUT, HL_ALPHA, STRIKE_Y, penPieces, penPieceAt } from './pdfexport.js';
 import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 import * as R from './reader.js';
 
-const APP_VERSION = 'v22';
+const APP_VERSION = 'v23';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -293,8 +293,8 @@ async function paintImages(ctx, images, W) {
 // ---------- Miniature (copertine e barra pagine): salvate in IndexedDB, rifatte solo se la pagina cambia ----------
 const TW = 320;
 const thumbMem = new Map(); // id pagina -> { u: updated, url }
-async function renderThumb(rec) {
-  const w = TW, h = Math.round(w * (rec.aspect || LAYOUT.a4));
+async function renderThumb(rec, w = TW, quality = 0.84) {
+  const h = Math.round(w * (rec.aspect || LAYOUT.a4));
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const ctx = cv.getContext('2d');
   try {
@@ -310,7 +310,7 @@ async function renderThumb(rec) {
     await paintImages(ctx, rec.images, w);
     paintBlocks(ctx, rec.blocks, w, h);
     for (const st of rec.strokes || []) drawStroke(ctx, st, w, h);
-    return cv.toDataURL('image/jpeg', 0.84);
+    return cv.toDataURL('image/jpeg', quality);
   } catch (e) {
     if (e && e.name !== 'NoData') console.warn('miniatura', e);
     return null;
@@ -2094,6 +2094,18 @@ function paintAskPage() {
 }
 
 // il testo da mandare: selezione (con la sua pagina come contesto), pagina corrente, o i passaggi utili del PDF
+// 15/11: la scrittura a mano non è testo. Se la pagina ha tratti di penna o evidenziazioni, all'AI va anche una foto
+// della pagina (stesso disegno delle miniature, più grande). Serve il bridge 7; Argon legge solo testo.
+const INK_W = 1100;
+function inkOk(src) {
+  const im = aiCfg.health && aiCfg.health.immagini;
+  return !!(im && im.ok) && src !== 'argon' && (src !== 'claude' || !!im.claude);
+}
+async function inkImage(rec, src) {
+  if (!(rec.strokes || []).length || !inkOk(src)) return null;
+  const url = await renderThumb(rec, INK_W, 0.8);
+  return url ? url.slice(url.indexOf(',') + 1) : null;
+}
 async function askContext(scope, what, src) {
   const touched = new Set(), title = nb.node.name;
   try {
@@ -2101,13 +2113,17 @@ async function askContext(scope, what, src) {
     if (scope === 'sel') {
       const s = askSt.sel;
       const pageTextS = await aiPageText(s.p.rec, touched).catch(() => '');
-      return { ctx: { title, scope, quote: s.text, page: s.page, pageText: pageTextS }, info: 'Selezione · pagina ' + s.page };
+      const img = await inkImage(s.p.rec, src).catch(() => null);
+      return { ctx: { title, scope, quote: s.text, page: s.page, pageText: pageTextS, ink: !!img }, images: img ? [img] : null,
+        info: 'Selezione · pagina ' + s.page + (img ? ' · con la scrittura a mano' : '') };
     }
     if (scope === 'page') {
       const i = Math.max(0, curIndex()), p = nb.pages[i];
       const text = await aiPageText(p.rec, touched);
-      if (!text.trim()) return { error: p.rec.type === 'pdf' ? 'Su questa pagina non c’è testo da inviare: è una scansione (una foto) o è vuota.' : 'Questa pagina non ha testo scritto con la tastiera (la scrittura a mano non si può inviare).' };
-      return { ctx: { title, scope, page: i + 1, pageText: text }, info: 'Pagina ' + (i + 1) };
+      const img = await inkImage(p.rec, src).catch(() => null);
+      if (!text.trim() && !img) return { error: (p.rec.strokes || []).length && !inkOk(src) ? (src === 'argon' ? 'Argon legge solo il testo: per la scrittura a mano scegli Claude o un modello locale.' : 'Per leggere la scrittura a mano serve il bridge aggiornato sul Mac Studio.') : p.rec.type === 'pdf' ? 'Su questa pagina non c’è testo da inviare: è una scansione (una foto) o è vuota.' : 'Questa pagina è vuota.' };
+      return { ctx: { title, scope, page: i + 1, pageText: text, ink: !!img }, images: img ? [img] : null,
+        info: 'Pagina ' + (i + 1) + (img ? ' · con la scrittura a mano' : '') };
     }
     const list = [], n = nb.pages.length;
     for (let i = 0; i < n; i++) {
@@ -2141,7 +2157,7 @@ async function refreshHealthQuiet() {
 }
 function storeHealth(j) {
   aiCfg.health = { at: Date.now(), version: String(j.version || ''), qwen: j.qwen, claude: j.claude, web_claude: j.web_claude || null, web_qwen: j.web_qwen || null,
-    gemma: j.gemma || null, web_gemma: j.web_gemma || null, argon: j.argon || null, backup: j.backup || null, sync: j.sync || null };
+    gemma: j.gemma || null, web_gemma: j.web_gemma || null, argon: j.argon || null, backup: j.backup || null, sync: j.sync || null, immagini: j.immagini || null };
   // la sorgente scelta non c'è (più) sul Mac: passo alla prima che c'è
   if (!(j[askSt.src] && j[askSt.src].ok) && !askSt.busy) {
     const alt = ['qwen', 'gemma', 'claude', 'argon'].find((k) => j[k] && j[k].ok);
@@ -2202,6 +2218,7 @@ async function askRun(what, opts = {}) {
   askSt.info = ''; askSt.ctxInfo = c.info;
   askSt.pick = c.pick || null;
   const body = { provider: src, model, system: A.SYSTEM, messages: [{ role: 'user', content: A.buildMessage(c.ctx, what) }] };
+  if (c.images) body.images = c.images; // foto della pagina con la scrittura a mano (bridge 7)
   if (web) {
     body.web = true;
     body.web_ctx = A.webCtx(c.ctx, what); // il Mac Studio sceglie da qui le ricerche mirate (nomi propri, termini specifici)
@@ -2779,12 +2796,15 @@ function drawStroke(ctx, stroke, W, H) {
     ctx.fill();
     return;
   }
-  for (let i = 1; i < pts.length; i++) drawSegment(ctx, stroke, pts[i - 1], pts[i], W, H);
+  for (const k of penPieces(pts)) drawPiece(ctx, stroke, k, W, H);
 }
-function drawSegment(ctx, stroke, a, b, W, H) {
+// un pezzo di curva del tratto di penna (vedi penPieces in pdfexport.js)
+function drawPiece(ctx, stroke, k, W, H) {
   ctx.strokeStyle = stroke.c; ctx.lineCap = 'round';
-  ctx.lineWidth = stroke.w * W * (a[2] + b[2]) / 2;
-  ctx.beginPath(); ctx.moveTo(a[0] * W, a[1] * H); ctx.lineTo(b[0] * W, b[1] * H); ctx.stroke();
+  ctx.lineWidth = stroke.w * W * k.p;
+  ctx.beginPath(); ctx.moveTo(k.a[0] * W, k.a[1] * H);
+  if (k.c) ctx.quadraticCurveTo(k.c[0] * W, k.c[1] * H, k.b[0] * W, k.b[1] * H); else ctx.lineTo(k.b[0] * W, k.b[1] * H);
+  ctx.stroke();
 }
 function redrawPage(p, extra) {
   const c = p.draw;
@@ -2863,9 +2883,10 @@ function attachDrawing(p) {
       const last = cur.pts[cur.pts.length - 1];
       if (Math.abs(last[0] - x) * p.cw < 0.4 && Math.abs(last[1] - y) * p.ch < 0.4) continue;
       if (straight) { cur.pts = [cur.pts[0], [x, cur.pts[0][1], 1]]; continue; }
-      const pt = [x, y, factor(ev)];
+      // pressione ammorbidita: lo spessore cambia gradualmente, senza scatti tra un punto e l'altro
+      const pt = [x, y, cur.t === 'pen' ? last[2] * 0.6 + factor(ev) * 0.4 : factor(ev)];
       cur.pts.push(pt);
-      if (cur.t === 'pen' && c.width) drawSegment(c.getContext('2d'), cur, last, pt, c.width, c.height);
+      if (cur.t === 'pen' && c.width) drawPiece(c.getContext('2d'), cur, penPieceAt(cur.pts, cur.pts.length - 1), c.width, c.height);
     }
     if (cur && (cur.t === 'hl' || straight)) redrawPage(p, cur);
   });

@@ -19,6 +19,26 @@ function toPdf(u, v, w, h, rot) {
   }
 }
 
+// 15/11: tratto di penna morbido. Invece di rette da un punto all'altro (si vedevano gli spigoli), curve quadratiche
+// che passano per i punti medi: il pezzo i va dal medio (i-1,i) al medio (i,i+1) con il punto i come controllo,
+// così due pezzi vicini hanno la stessa tangente. Spessore di ogni pezzo = pressione del suo punto di controllo.
+// Ritorna [{ a:[x,y], c:[x,y], b:[x,y], p }] (coordinate come nei punti: 0–1).
+export function penPieces(pts) {
+  const n = pts.length, out = [];
+  if (n < 2) return out;
+  const mid = (u, v) => [(u[0] + v[0]) / 2, (u[1] + v[1]) / 2];
+  out.push({ a: [pts[0][0], pts[0][1]], c: null, b: mid(pts[0], pts[1]), p: (pts[0][2] + pts[1][2]) / 2 });
+  for (let i = 1; i < n - 1; i++) out.push({ a: mid(pts[i - 1], pts[i]), c: [pts[i][0], pts[i][1]], b: mid(pts[i], pts[i + 1]), p: pts[i][2] });
+  out.push({ a: mid(pts[n - 2], pts[n - 1]), c: null, b: [pts[n - 1][0], pts[n - 1][1]], p: (pts[n - 2][2] + pts[n - 1][2]) / 2 });
+  return out;
+}
+// il pezzo che si può disegnare subito quando arriva il punto numero k (k ≥ 1) mentre si scrive
+export function penPieceAt(pts, k) {
+  const mid = (u, v) => [(u[0] + v[0]) / 2, (u[1] + v[1]) / 2];
+  if (k === 1) return { a: [pts[0][0], pts[0][1]], c: null, b: mid(pts[0], pts[1]), p: (pts[0][2] + pts[1][2]) / 2 };
+  return { a: mid(pts[k - 2], pts[k - 1]), c: [pts[k - 1][0], pts[k - 1][1]], b: mid(pts[k - 1], pts[k]), p: pts[k - 1][2] };
+}
+
 export function drawStrokes(page, list) {
   const { rgb, LineCapStyle } = window.PDFLib;
   const { width: w, height: h } = page.getSize();
@@ -39,11 +59,10 @@ export function drawStrokes(page, list) {
     } else if (pts.length === 1) {
       page.drawCircle({ x: pts[0][0], y: pts[0][1], size: base * s.pts[0][2] / 2, color });
     } else {
-      for (let i = 1; i < pts.length; i++) {
-        page.drawLine({
-          start: { x: pts[i - 1][0], y: pts[i - 1][1] }, end: { x: pts[i][0], y: pts[i][1] },
-          thickness: base * (s.pts[i - 1][2] + s.pts[i][2]) / 2, color, lineCap: LineCapStyle.Round,
-        });
+      const P = (q) => { const [x, y] = toPdf(q[0], q[1], w, h, rot); return x + ' ' + (-y); };
+      for (const k of penPieces(s.pts)) {
+        const d = 'M ' + P(k.a) + (k.c ? ' Q ' + P(k.c) + ' ' + P(k.b) : ' L ' + P(k.b));
+        page.drawSvgPath(d, { x: 0, y: 0, borderColor: color, borderWidth: base * k.p, borderLineCap: LineCapStyle.Round });
       }
     }
   }

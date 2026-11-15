@@ -14,7 +14,7 @@ if args[:1] == ['--help']:
           '  --system-prompt <prompt>\n  --include-partial-messages\n  --safe-mode\n  --restricted\n  --strict-mcp-config\n'
           '  --disable-slash-commands\n  --settings <file-or-json>\n  --model <model>\n'
           '  --permission-mode <mode>  (choices: "acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")\n'
-          '  --permission-prompts <target>')
+          '  --permission-prompts <target>\n  --input-format <format>')
     sys.exit(0)
 if args[:2] == ['auth', 'status']:
     print(json.dumps({'loggedIn': True, 'authMethod': 'claude.ai', 'subscriptionType': 'max'}))

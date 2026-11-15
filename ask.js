@@ -93,16 +93,20 @@ const clipTo = (t, n) => (t.length > n ? t.slice(0, n).replace(/\s+\S*$/, '') + 
 
 // ctx: { title, scope: 'sel'|'page'|'doc', quote?, page (numero), pageText?, docText?, docNote? }
 // what: { action } oppure { question }
+// 15/11: con la foto della pagina (scrittura a mano, evidenziazioni) allegata alla domanda
+export const INK_NOTE = 'In allegato c’è la foto della pagina {p} con i segni fatti a mano dall’utente (penna ed evidenziatore). '
+  + 'Leggi anche la scrittura a mano: se la domanda la riguarda, trascrivila fedelmente e dì se una parola è incerta.';
 export function buildMessage(ctx, what) {
   const out = ['Documento: «' + (ctx.title || 'senza titolo') + '»'];
   if (ctx.scope === 'sel') {
     out.push('', 'Testo selezionato (pagina ' + ctx.page + '):', fence(ctx.quote));
     if (ctx.pageText && ctx.pageText.trim()) out.push('', 'Per contesto, il testo della pagina ' + ctx.page + ':', fence(clipTo(ctx.pageText, 6000)));
   } else if (ctx.scope === 'page') {
-    out.push('', 'Testo della pagina ' + ctx.page + ':', fence(ctx.pageText || ''));
+    out.push('', 'Testo della pagina ' + ctx.page + ':', ctx.pageText && ctx.pageText.trim() ? fence(ctx.pageText) : '(nessun testo stampato: solo scrittura a mano)');
   } else {
     out.push('', ctx.docNote || 'Passaggi del documento:', fence(ctx.docText || ''));
   }
+  if (ctx.ink) out.push('', INK_NOTE.replace('{p}', ctx.page));
   const a = what.action ? actionById(what.action) : null;
   out.push('', a ? a[ctx.scope] : 'Domanda: ' + String(what.question || '').trim() + '\nRispondi basandoti sul testo; se la risposta non c’è, dillo.');
   return out.join('\n');

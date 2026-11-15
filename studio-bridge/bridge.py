@@ -29,6 +29,8 @@ import hmac
 import http.client
 import http.server
 import ipaddress
+import base64
+import binascii
 import json
 import os
 import queue
@@ -45,7 +47,7 @@ import time
 import unicodedata
 import urllib.parse
 
-VERSION = '6'
+VERSION = '7'  # 15/11: immagini della pagina (scrittura a mano) per Ollama e Claude
 HOST = '127.0.0.1'  # fisso: dall'esterno si passa solo da Tailscale Serve
 HOME = os.environ.get('STUDIO_BRIDGE_HOME') or os.path.join(os.path.expanduser('~'), '.studio-bridge')
 
@@ -72,7 +74,7 @@ DEFAULTS = {
     'claude_bin': '',          # vuoto = cerca `claude` nel PATH e nei posti soliti
     'claude_models': ['sonnet', 'opus'],
     'claude_default': 'sonnet',
-    'max_body': 2 * 1024 * 1024,
+    'max_body': 6 * 1024 * 1024,  # 15/11: con le immagini della pagina
     'max_concurrent': 2,
     'timeout': 300,            # durata massima di una risposta (secondi)
     'first_byte_timeout': 120, # tempo massimo prima che arrivi qualcosa (Qwen deve caricare il modello, Claude pensa)
@@ -103,6 +105,8 @@ MAX_SYSTEM = 20000
 MAX_WEB_QUERY = 400
 MAX_QUERIES = 3   # ricerche per domanda (scelte dal modello o scritte a mano)
 MAX_QUERY = 200
+MAX_IMAGES = 3            # immagini di pagina per domanda (scrittura a mano)
+MAX_IMAGE_B64 = 1500000   # caratteri base64 per immagine (~1,1 MB)
 CTX_LIMITS = (('title', 300), ('question', 2000), ('quote', 4000), ('near', 4000))
 WEB_TOOLS = ('WebSearch', 'WebFetch')
 CLAUDE_MODEL_RE = re.compile(r'^(?:sonnet|opus|haiku|fable|claude-[a-z0-9][a-z0-9.\-]{1,60})$')
@@ -828,7 +832,7 @@ def save_answer(body, provider, model, web, result, secs, rec, confronto=False):
     riga = {'ora': time.strftime('%Y-%m-%d %H:%M:%S'), 'provider': provider, 'model': model, 'web': web,
             'esito': result, 'secondi': round(secs, 1), 'confronto': bool(confronto),
             'risposta': ''.join(rec.get('text', [])), 'ricerche': rec.get('queries'), 'fonti': rec.get('sources'),
-            'richiesta': body}
+            'richiesta': dict(body, images=['(immagine)'] * len(body['images'])) if body.get('images') else body}
     try:
         os.makedirs(d, mode=0o700, exist_ok=True)
         with BACKUP_LOCK:
@@ -999,7 +1003,7 @@ class QwenJob:  # anche per Gemma: stesso Ollama, con il suo contesto e il suo n
             if got is None or self.cancelled:
                 return
             queries, found = got
-            messages = messages[:-1] + [{'role': 'user', 'content': messages[-1]['content'] + web_block(queries, found)}]
+            messages = messages[:-1] + [dict(messages[-1], content=messages[-1]['content'] + web_block(queries, found))]
             system = (system + '\n\n' if system else '') + WEB_RULES_QWEN
         body = {'model': self.model, 'stream': True, 'options': {'num_ctx': self.num_ctx},
                 'messages': ([{'role': 'system', 'content': system}] if system else []) + messages}
@@ -1110,7 +1114,7 @@ def child_env(bin_path, web=False):
 _claude_cache = {'at': 0, 'bin': None, 'info': None}
 _claude_lock = threading.Lock()
 OPTIONAL_FLAGS = ('--safe-mode', '--strict-mcp-config', '--disable-slash-commands', '--include-partial-messages', '--settings',
-                  '--restricted', '--permission-prompts')
+                  '--restricted', '--permission-prompts', '--input-format')
 WEB_FLAGS = ('--allowedTools', '--permission-mode', 'dontAsk')  # servono tutti per "Cerca sul web" con Claude
 
 
@@ -1192,6 +1196,8 @@ class ClaudeJob:
         else:
             a = [self.info['bin'], '-p', '--tools', '']
         a += ['--no-session-persistence', '--output-format', 'stream-json', '--verbose', '--model=' + self.model]
+        if self.messages[-1].get('images'):  # 15/11: la domanda arriva come messaggio JSON con le immagini della pagina
+            a += ['--input-format', 'stream-json']
         if '--include-partial-messages' in flags:
             a.append('--include-partial-messages')
         for f in ('--safe-mode', '--restricted', '--strict-mcp-config', '--disable-slash-commands'):
@@ -1303,7 +1309,13 @@ class ClaudeJob:
             CHILDREN.add(self.proc)
         if self.cancelled:  # Ferma arrivato mentre partiva
             kill_tree(self.proc)
-        prompt = (claude_prompt(self.messages) + (self.web_note() if self.web else '')).encode('utf-8')
+        prompt = claude_prompt(self.messages) + (self.web_note() if self.web else '')
+        imgs = self.messages[-1].get('images')
+        if imgs:
+            content = [{'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png' if im.startswith('iVBOR') else 'image/jpeg', 'data': im}}
+                       for im in imgs] + [{'type': 'text', 'text': prompt}]
+            prompt = json.dumps({'type': 'user', 'message': {'role': 'user', 'content': content}}) + '\n'
+        prompt = prompt.encode('utf-8')
 
         def feed():
             try:
@@ -1676,6 +1688,22 @@ def validate(body):
         clean.append({'role': m['role'], 'content': m['content']})
     if clean[-1]['role'] != 'user' or not clean[-1]['content'].strip():
         raise BadRequest('Manca la domanda.')
+    imgs = body.get('images') or []  # 15/11: foto della pagina con la scrittura a mano (JPEG o PNG in base64)
+    if not isinstance(imgs, list) or len(imgs) > MAX_IMAGES:
+        raise BadRequest('Immagini non valide: al massimo %d per domanda.' % MAX_IMAGES)
+    for im in imgs:
+        if not isinstance(im, str) or not im or len(im) > MAX_IMAGE_B64:
+            raise BadRequest('Immagine non valida o troppo grande.')
+        try:
+            head = base64.b64decode(im[:24], validate=True)
+        except (binascii.Error, ValueError):
+            raise BadRequest('Immagine non valida.')
+        if not (head.startswith(b'\xff\xd8\xff') or head.startswith(b'\x89PNG')):
+            raise BadRequest('Immagine non valida: serve JPEG o PNG.')
+    if imgs and provider == 'argon':
+        raise BadRequest('Argon non legge la scrittura a mano: scegli Claude o un modello locale.')
+    if imgs:
+        clean[-1]['images'] = imgs
     model = body.get('model') or ''
     if not isinstance(model, str):
         raise BadRequest('Modello non valido.')
@@ -1832,6 +1860,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'argon': argon_status(),  # l'app mostra Argon solo se ok
             'web_argon': {'ok': argon_web(), 'error': '' if argon_web() else 'Argon lavora sui libri, non sul web'},
             'sync': {'ok': bool(sync_dir()), 'max_mb': CFG['sync_max_mb']},  # dove salva non si dice
+            'immagini': {'ok': True, 'claude': info['ok'] and '--input-format' in info.get('flags', []), 'max': MAX_IMAGES},
         })
 
     # ---------- sincronizzazione tra iPad ----------
@@ -1999,6 +2028,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return
                 if web and not info['web']:
                     self.send_json(503, {'error': MSG_OLD_CLAUDE_WEB})
+                    return
+                if messages[-1].get('images') and '--input-format' not in info.get('flags', []):
+                    self.send_json(400, {'error': 'Il `claude` di questo Mac è troppo vecchio per leggere le immagini: aggiornalo o usa un modello locale.'})
                     return
                 job = ClaudeJob(info, model, system, messages, wopt if web else None)
             self._rec = {'text': []}

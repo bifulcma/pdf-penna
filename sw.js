@@ -1,6 +1,6 @@
 // La versione della cache cambia a ogni aggiornamento dell'app. Il nuovo service worker si installa e prende
 // subito il controllo; l'app aperta mostra "È pronta una nuova versione · Aggiorna" (niente ricariche a sorpresa).
-const VERSION = 'v22'; // rev. 2 (15/11): sync non si rompe se Safari interrompe l'archivio — cambiare questo file fa riscaricare tutto
+const VERSION = 'v23'; // brief 13 (15/11): l'AI legge anche la scrittura a mano (foto della pagina) — cambiare questo file fa riscaricare tutto
 const CACHE = 'pdf-penna-' + VERSION;
 const SHELL = [
   './', 'index.html', 'app.js', 'db.js', 'sync.js', 'pdfexport.js', 'find.js', 'notes.js', 'ask.js', 'reader.js', 'config.js', 'polyfills.js', 'pdfworker.js', 'style.css', 'manifest.webmanifest',
