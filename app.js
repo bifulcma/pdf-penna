@@ -3568,10 +3568,10 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) $('update-bar').hidden = false; });
   $('btn-update').onclick = async () => { await flush(); location.reload(); };
   // iPhone/iPad (07/11/2026): l'icona riprende l'app dov'era e iOS non cerca aggiornamenti da solo.
-  // Al ritorno in primo piano (al massimo ogni 15 minuti) chiedo se c'è una versione nuova: se sì compare «Aggiorna».
+  // Al ritorno in primo piano (al massimo ogni 2 minuti, dal 15/11; prima 15) chiedo se c'è una versione nuova: se sì compare «Aggiorna».
   let ultimoControllo = Date.now();
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || Date.now() - ultimoControllo < 15 * 60 * 1000) return;
+    if (document.visibilityState !== 'visible' || Date.now() - ultimoControllo < 2 * 60 * 1000) return;
     ultimoControllo = Date.now();
     navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
   });
