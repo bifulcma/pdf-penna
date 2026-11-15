@@ -7,7 +7,7 @@ export const QWEN_WEB_ANSWER = 'Secondo le fonti, la Compagnia di Gesù fu appro
 // Passo 1 del web (fase 9): il bridge chiede le ricerche senza streaming ("stream": false, risposta JSON). Parole nel messaggio:
 // Sufyani = una ricerca mirata; SCARSO = ricerca che dà risultati fuori tema (poi, al secondo tentativo, una buona);
 // SEMPRE-SCARSO = fuori tema anche al secondo tentativo; PIANO-ROTTO = risposta senza JSON; PIANO-LENTO = non risponde;
-// PIANO-ELENCO = elenco "1. …" invece del JSON; NO-THINK = Ollama vecchio che non conosce "think" (errore 400 la prima volta).
+// piano-vuoto = nessuna ricerca proposta (15/11, pagina scritta a mano); PIANO-ELENCO = elenco "1. …" invece del JSON; NO-THINK = Ollama vecchio che non conosce "think" (errore 400 la prima volta).
 export function planFor(text) {
   if (text.includes('Ho già cercato')) {
     if (text.includes('SEMPRE-SCARSO')) return { queries: ['SCARSO quattro'], keywords: ['Zorbex'] };
@@ -32,7 +32,7 @@ export function startOllama(port, { models = ['qwen3:14b', 'llama3.2:3b', 'nomic
         st.plans.push(body);
         if (last.includes('PIANO-LENTO')) return;
         if (last.includes('NO-THINK') && 'think' in body) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid option "think"' })); }
-        const content = last.includes('PIANO-ROTTO') ? 'Mi dispiace, non so.' : last.includes('PIANO-ELENCO') ? 'Ecco:\n1. Sufyani escatologia sciita\n2. Sufyani Mahdi'
+        const content = last.includes('piano-vuoto') ? '{"queries": [], "keywords": []}' : last.includes('PIANO-ROTTO') ? 'Mi dispiace, non so.' : last.includes('PIANO-ELENCO') ? 'Ecco:\n1. Sufyani escatologia sciita\n2. Sufyani Mahdi'
           : '<think>scelgo</think>' + JSON.stringify(planFor(last));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return setTimeout(() => res.end(JSON.stringify({ model: body.model, message: { role: 'assistant', content }, done: true })), planDelay);

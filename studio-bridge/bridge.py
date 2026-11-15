@@ -156,6 +156,7 @@ CHILDREN = set()  # processi `claude` in corso (da chiudere se il bridge si ferm
 CHILDREN_LOCK = threading.Lock()
 EMPTY_DIR = os.path.join(HOME, 'vuota')  # cartella vuota: `claude` parte da qui, senza progetti né file intorno
 
+MSG_NO_QUERIES = 'Niente da cercare sul web: rispondo dalla pagina'
 MSG_OLLAMA_DOWN = 'Ollama non risponde sul Mac Studio: apri l’app Ollama (o scrivi «ollama serve» nel Terminale).'
 MSG_NO_NEMOTRON = 'In Ollama non c’è un modello Nemotron: sul Mac Studio scrivi nel Terminale «ollama run nemotron35».'
 MSG_NO_QWEN = 'In Ollama non c’è un modello Qwen: sul Mac Studio scrivi nel Terminale «ollama pull qwen3».'
@@ -342,6 +343,8 @@ def guess_queries(ctx, messages):
     else:
         text, title, ask = messages[-1]['content'][:6000], '', ''
     names = proper_names(text) or proper_names(ctx['near'] if ctx else '')
+    if not names and messages and messages[-1].get('images') and not (ctx and ctx['quote']):
+        return []  # 15/11: solo scrittura a mano e il modello non ha proposto niente: meglio non cercare la domanda alla lettera
     if names:
         out = [' '.join(names[:3])]
         if title:
@@ -361,6 +364,9 @@ def plan_message(ctx, messages, tried=None):
             out += ['', 'Testo vicino, per contesto%s:' % (' (pagina %d)' % ctx['page'] if ctx['page'] and not ctx['quote'] else ''), fence(ctx['near'])]
     else:
         out = ['Messaggio dell’utente, con il testo del documento:', fence(messages[-1]['content'][:6000])]
+    if messages and messages[-1].get('images'):  # 15/11: pagina scritta a mano
+        out += ['', 'Nella foto allegata c’è la pagina con la scrittura a mano dell’utente: leggila e scegli le ricerche dai nomi '
+                'e dai termini scritti a mano. Se non c’è niente da cercare sul web, rispondi {"queries": []}.']
     if tried:
         out += ['', 'Ho già cercato %s ma i risultati erano pochi o fuori tema. Proponi 1 o 2 ricerche DIVERSE: un’altra grafia o '
                 'traslitterazione del nome, un sinonimo, una ricerca più generale, o in inglese.' % '; '.join('«%s»' % x for x in tried)]
@@ -918,6 +924,8 @@ class QwenJob:  # anche per Gemma: stesso Ollama, con il suo contesto e il suo n
         body = {'model': self.model, 'stream': False, 'format': 'json', 'think': False,
                 'options': {'num_ctx': self.num_ctx, 'temperature': 0.2},  # stesso contesto: Ollama non ricarica il modello
                 'messages': [{'role': 'system', 'content': PLAN_RULES}, {'role': 'user', 'content': prompt}]}
+        if self.messages[-1].get('images'):
+            body['messages'][1]['images'] = self.messages[-1]['images']
         for _ in range(2):
             try:
                 self.conn = ollama_conn(CFG['plan_timeout'])
@@ -969,6 +977,10 @@ class QwenJob:  # anche per Gemma: stesso Ollama, con il suo contesto e il suo n
             else:
                 queries = guess_queries(w['ctx'], self.messages)
                 log('web: Qwen non ha proposto ricerche, uso i nomi propri del testo')
+        if not queries:
+            q.put(('status', {'t': MSG_NO_QUERIES}))
+            q.put(('queries', {'list': [], 'edited': False, 'found': 0, 'poor': False}))
+            return 'skip'
         toks = key_tokens(keywords or queries[:1])
         q.put(('queries', {'list': queries, 'edited': edited}))
         results = []
@@ -1002,6 +1014,7 @@ class QwenJob:  # anche per Gemma: stesso Ollama, con il suo contesto e il suo n
             got = self.research(q)
             if got is None or self.cancelled:
                 return
+        if self.web and got != 'skip':
             queries, found = got
             messages = messages[:-1] + [dict(messages[-1], content=messages[-1]['content'] + web_block(queries, found))]
             system = (system + '\n\n' if system else '') + WEB_RULES_QWEN
@@ -1158,6 +1171,16 @@ def claude_info(force=False):
         return info
 
 
+def claude_stdin(text, messages):
+    """Quello che si scrive a `claude`: il testo; con le immagini della pagina un messaggio JSON (--input-format stream-json)."""
+    imgs = messages[-1].get('images')
+    if not imgs:
+        return text.encode('utf-8')
+    content = [{'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png' if im.startswith('iVBOR') else 'image/jpeg', 'data': im}}
+               for im in imgs] + [{'type': 'text', 'text': text}]
+    return (json.dumps({'type': 'user', 'message': {'role': 'user', 'content': content}}) + '\n').encode('utf-8')
+
+
 def claude_prompt(messages):
     if len(messages) == 1:
         return messages[0]['content']
@@ -1228,7 +1251,7 @@ class ClaudeJob:
         timer = threading.Timer(CFG['plan_timeout'], kill_tree, (proc,))
         timer.daemon = True
         timer.start()
-        prompt = plan_message(self.wctx, self.messages).encode('utf-8')
+        prompt = claude_stdin(plan_message(self.wctx, self.messages), self.messages)  # 15/11: con la foto della pagina
 
         def feed():
             try:
@@ -1309,13 +1332,7 @@ class ClaudeJob:
             CHILDREN.add(self.proc)
         if self.cancelled:  # Ferma arrivato mentre partiva
             kill_tree(self.proc)
-        prompt = claude_prompt(self.messages) + (self.web_note() if self.web else '')
-        imgs = self.messages[-1].get('images')
-        if imgs:
-            content = [{'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png' if im.startswith('iVBOR') else 'image/jpeg', 'data': im}}
-                       for im in imgs] + [{'type': 'text', 'text': prompt}]
-            prompt = json.dumps({'type': 'user', 'message': {'role': 'user', 'content': content}}) + '\n'
-        prompt = prompt.encode('utf-8')
+        prompt = claude_stdin(claude_prompt(self.messages) + (self.web_note() if self.web else ''), self.messages)
 
         def feed():
             try:
