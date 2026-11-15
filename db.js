@@ -2,6 +2,8 @@
 // nodes  = quaderni e cartelle   pages = pagine   blobs = allegati (PDF/immagini)   meta = piccole impostazioni
 const DB_NAME = 'pdf-penna';
 let dbp;
+// 15/11: Safari su iPad annulla le transazioni con errore null quando l'app va in secondo piano (es. selettore di file)
+const idbAbort = () => new DOMException('Archivio interrotto (app in secondo piano)', 'AbortError');
 export function db() {
   if (!dbp) dbp = new Promise((res, rej) => {
     const r = indexedDB.open(DB_NAME, 2);
@@ -13,7 +15,7 @@ export function db() {
       }
     };
     r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
+    r.onerror = () => { dbp = null; rej(r.error || idbAbort()); };
   });
   return dbp;
 }
@@ -23,8 +25,8 @@ async function tx(store, mode, fn, opts) {
     const t = opts ? d.transaction(store, mode, opts) : d.transaction(store, mode);
     const req = fn(t.objectStore(store));
     t.oncomplete = () => res(req && req.result);
-    t.onerror = () => rej(t.error);
-    t.onabort = () => rej(t.error);
+    t.onerror = () => rej(t.error || idbAbort());
+    t.onabort = () => rej(t.error || idbAbort());
   });
 }
 export const put = (s, rec) => tx(s, 'readwrite', (o) => o.put(rec));

@@ -233,6 +233,7 @@ export async function syncNow() {
     if (changed) dataListeners.forEach((f) => f());
   } catch (e) {
     if (e instanceof Offline) setStatus('offline');
+    else if (!e || e.name === 'AbortError') { setStatus('idle'); again = true; }  // interrotto dal sistema: si riprova
     else setStatus('error', e.needLogin ? e.message : (e.message || String(e)));
   } finally {
     running = false;

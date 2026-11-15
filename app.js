@@ -60,7 +60,7 @@ const closePdf = (doc) => { try { (doc.penTask || doc).destroy(); } catch {} };
 // legge un file scelto dall'utente (iOS: arrayBuffer() c'è da iOS 14, FileReader come riserva)
 function readFile(f) {
   if (f.arrayBuffer) return f.arrayBuffer();
-  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsArrayBuffer(f); });
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error || new Error('Non riesco a leggere il file: se è su iCloud, scaricalo prima dall\'app File')); r.readAsArrayBuffer(f); });
 }
 
 // ---------- Utilità ----------
