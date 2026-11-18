@@ -7,7 +7,7 @@ import * as A from './ask.js';
 import * as R from './reader.js';
 import { buildTextPdf } from './textpdf.js';
 
-const APP_VERSION = 'v25';
+const APP_VERSION = 'v26';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -1976,6 +1976,7 @@ function paintAskOut() {
   mb.hidden = !(aiCfg.health && aiCfg.health.bozza);
   mb.disabled = !has || !!askSt.mailBusy;
   mb.querySelector('span').textContent = askSt.mailBusy ? 'Preparo la bozza…' : askSt.mailed && has ? 'Bozza creata ✓' : 'Bozza Gmail';
+  $('ask-pdf').disabled = !has;
   const r = $('ask-retry');
   r.textContent = ''; r.append(icon(askSt.busy ? 'stop' : 'retry'), el('span', '', askSt.busy ? 'Ferma' : 'Riprova'));
   r.setAttribute('aria-label', askSt.busy ? 'Ferma' : 'Riprova'); r.title = r.getAttribute('aria-label'); // su iPhone si vede solo l'icona
@@ -2113,12 +2114,13 @@ async function inkImage(rec, src) {
 }
 // «Trascrivi» (brief 14): le foto delle pagine scritte a mano. Selezione o pagina: quella pagina. «Tutto il PDF»: le pagine
 // con tratti, dalla pagina corrente in avanti, quante ne accetta il bridge (3); se ce ne sono altre lo dice.
-async function inkContext(scope, src, title, touched) {
+async function inkContext(scope, src, title, touched, only = null) {
   const max = Math.max(1, Math.min(3, (aiCfg.health && aiCfg.health.immagini && aiCfg.health.immagini.max) || 1));
   const inked = (p) => (p.rec.strokes || []).length > 0;
   if (!inkOk(src)) return { error: src === 'argon' ? 'Argon legge solo il testo: per la scrittura a mano scegli Claude o un modello locale.' : 'Per leggere la scrittura a mano serve il bridge aggiornato sul Mac Studio.' };
   let list, more = 0;
-  if (scope === 'doc') {
+  if (only) list = only; // un gruppo di pagine già scelto (v26: tutte le pagine scritte, a gruppi)
+  else if (scope === 'doc') {
     const all = nb.pages.filter(inked), from = all.filter((p) => nb.pages.indexOf(p) >= Math.max(0, curIndex()));
     const pool = from.length ? from : all;
     list = pool.slice(0, max); more = all.length - list.length;
@@ -2136,7 +2138,7 @@ async function inkContext(scope, src, title, touched) {
     pages.push({ n: nb.pages.indexOf(p) + 1, text: await aiPageText(p.rec, touched).catch(() => '') });
   }
   const nums = pages.map((x) => x.n);
-  return { ctx: { title, scope: 'ink', pages, page: nums[0], ink: true }, images,
+  return { ctx: { title, scope: 'ink', pages, page: nums[0], ink: true, part: !!only }, images,
     info: (nums.length === 1 ? 'Pagina ' + nums[0] : 'Pagine ' + nums.join(', ')) + ' · scrittura a mano' + (more > 0 ? ' (' + (more === 1 ? 'un’altra pagina scritta' : 'altre ' + more + ' pagine scritte') + ': spostati lì e ripeti)' : '') };
 }
 async function askContext(scope, what, src) {
@@ -2247,6 +2249,11 @@ async function askRun(what, opts = {}) {
   askSt.queries = queries || []; askSt.qPlanned = false; askSt.qFound = -1; askSt.qPoor = false; askSt.qedit = false;
   askSt.info = 'Preparo il testo…'; askSt.ctxInfo = ''; askSt.model = model;
   paintAsk();
+  if (act && act.ink && askSt.scope === 'doc' && inkOk(src)) { // tutte le pagine scritte a mano: se sono più di un gruppo, a gruppi
+    const max = Math.max(1, Math.min(3, (aiCfg.health.immagini && aiCfg.health.immagini.max) || 1));
+    const all = nb.pages.filter((p) => (p.rec.strokes || []).length > 0);
+    if (all.length > max) { await askPenAll(src, model, all, max); return; }
+  }
   const c = await askContext(askSt.scope, what, src);
   if (!c || askSt.stopped) { askDone(null); return; }
   if (c.error) { askDone(c.error); return; }
@@ -2265,7 +2272,8 @@ async function askRun(what, opts = {}) {
   paintAskOut();
   await askStream(body);
 }
-async function askStream(body) {
+async function askStream(body, keep = false) { // keep: non chiude la richiesta (ne seguono altre); ritorna l'errore, o null
+  const fin = (e) => { if (!keep) askDone(e); return e || null; };
   const ctrl = new AbortController();
   askSt.ctrl = ctrl;
   let timedOut = false;
@@ -2274,10 +2282,10 @@ async function askStream(body) {
   try {
     res = await fetch(aiCfg.url + '/ask', { method: 'POST', body: JSON.stringify(body), signal: ctrl.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + aiCfg.token } });
-  } catch (e) { clearTimeout(wait); askDone(askSt.stopped && !timedOut ? null : A.MSG_DOWN); return; }
+  } catch (e) { clearTimeout(wait); return fin(askSt.stopped && !timedOut ? null : A.MSG_DOWN); }
   clearTimeout(wait);
-  if (!res.ok) { let j = null; try { j = await res.json(); } catch {} askDone(A.errorText(res.status, j)); return; }
-  if (!res.body || !res.body.getReader) { askDone('Questo browser non sa leggere le risposte a pezzi: aggiorna iPadOS.'); return; }
+  if (!res.ok) { let j = null; try { j = await res.json(); } catch {} return fin(A.errorText(res.status, j)); }
+  if (!res.body || !res.body.getReader) return fin('Questo browser non sa leggere le risposte a pezzi: aggiorna iPadOS.');
   const reader = res.body.getReader(), dec = new TextDecoder();
   let err = null, done = false, idle = 0;
   const arm = () => { clearTimeout(idle); idle = setTimeout(() => { timedOut = true; ctrl.abort(); }, 100000); }; // il bridge manda un "ping" ogni 15 s
@@ -2315,7 +2323,41 @@ async function askStream(body) {
   clearTimeout(idle);
   try { reader.cancel().catch(() => {}); } catch {}
   if (!err && !done && !askSt.stopped) err = 'La risposta si è interrotta a metà. Riprova.';
-  askDone(err);
+  return fin(err);
+}
+// v26: «Trascrivi le pagine scritte a mano» su tutto il quaderno. Le pagine con tratti vanno a gruppi (quante foto accetta il
+// bridge, 3): ogni gruppo dà solo la trascrizione, in fila sotto «## Trascrizione»; alla fine una richiesta sola, di solo testo,
+// scrive «## Analisi» su tutto. Il risultato è un testo unico: «Bozza Gmail» e «Condividi PDF» ne fanno un PDF solo.
+async function askPenAll(src, model, pages, max) {
+  const title = nb.node.name, touched = new Set();
+  const nums = pages.map((p) => nb.pages.indexOf(p) + 1), runs = [];
+  for (const n of nums) { const r = runs[runs.length - 1]; if (r && n === r[1] + 1) r[1] = n; else runs.push([n, n]); }
+  const where = 'Pagine ' + runs.map(([a, b]) => (a === b ? String(a) : a + '–' + b)).join(', ');
+  const groups = []; for (let i = 0; i < pages.length; i += max) groups.push(pages.slice(i, i + max));
+  const fail = (e) => { askSt.ctxInfo = where + ' · scrittura a mano'; askDone(e); };
+  askSt.sentAll = []; // per i test
+  try {
+    askSt.answer = '## Trascrizione\n\n';
+    for (let g = 0; g < groups.length; g++) {
+      askSt.info = ''; askSt.ctxInfo = where + ' · scrittura a mano · gruppo ' + (g + 1) + ' di ' + groups.length;
+      paintAskOut();
+      const c = await inkContext('doc', src, title, touched, groups[g]);
+      if (askSt.stopped) return fail(null);
+      if (c.error) return fail(c.error);
+      const body = { provider: src, model, system: A.SYSTEM, messages: [{ role: 'user', content: A.buildMessage(c.ctx, { action: 'pen' }) }], images: c.images };
+      askSt.sent = body; askSt.sentAll.push(body);
+      const err = await askStream(body, true);
+      if (err || askSt.stopped) return fail(err);
+      askSt.answer = askSt.answer.replace(/\s+$/, '') + '\n\n';
+    }
+    // un modello che ripete il titolo «Trascrizione» in ogni gruppo: ne resta uno solo, in cima
+    const transcript = askSt.answer.replace(/^[ \t]*#{1,6}[ \t]*Trascrizione[ \t]*:?[ \t]*$/gim, '').replace(/\n{3,}/g, '\n\n').trim();
+    askSt.answer = '## Trascrizione\n\n' + transcript + '\n\n## Analisi\n\n';
+    askSt.ctxInfo = where + ' · scrittura a mano · analisi'; paintAskOut();
+    const body = { provider: src, model, system: A.SYSTEM, messages: [{ role: 'user', content: A.penSumMessage(title, where.toLowerCase(), transcript) }] };
+    askSt.sent = body; askSt.sentAll.push(body);
+    fail(await askStream(body, true));
+  } finally { persistTexts(touched); }
 }
 function askDone(err) {
   askSt.busy = false; askSt.ctrl = null; askSt.thinking = false; askSt.searching = '';
@@ -2394,6 +2436,40 @@ async function askMail(toRaw) {
   } finally { clearTimeout(t); askSt.mailBusy = false; paintAskOut(); }
 }
 $('ask-mail').onclick = () => { askMail(); };
+// «Condividi PDF» (v26): lo stesso PDF della bozza, ma dato a te sull'iPad/iPhone: dal foglio «Condividi» lo alleghi a una
+// mail (Mail, Gmail), lo salvi in File, lo mandi dove vuoi. Non serve il Mac Studio.
+async function askPdf() {
+  const l = askSt.last;
+  if (!l || !askSt.answer || askSt.busy) return null;
+  const t0 = performance.now();
+  try {
+    const d = A.mailDoc({ title: nb.node.name, what: l.what, src: l.src, model: askSt.model, info: askSt.ctxInfo, answer: askSt.answer, sources: askSources().list, queries: askQueries() });
+    const bytes = await buildTextPdf(d.md, { title: d.title, meta: d.meta });
+    const name = d.subject.replace(/[\\/:*?"<>|]/g, '_').slice(0, 120) + '.pdf';
+    const file = new File([bytes], name, { type: 'application/pdf' });
+    askSt.pdfMade = { name, size: bytes.length }; // per i test
+    const canShare = navigator.canShare && navigator.canShare({ files: [file] });
+    // Safari apre «Condividi» solo subito dopo un tocco: se fare il PDF ha richiesto tempo, chiedo un tocco in più
+    let how = canShare && performance.now() - t0 < 900 ? 'share' : null;
+    for (let tries = 0; tries < 2 && canShare; tries++) {
+      if (!how) {
+        const r = await modal({ title: 'Il PDF è pronto', text: name, options: [{ label: 'Condividi (mail, File…)', value: 'share', accent: true }, { label: 'Scarica', value: 'dl', icon: 'save' }] });
+        if (!r) return file;
+        how = r.value;
+      }
+      if (how !== 'share') break;
+      try { await navigator.share({ files: [file], title: d.subject }); return file; }
+      catch (err) { if (err && err.name === 'AbortError') return file; how = null; }
+    }
+    const url = URL.createObjectURL(file), a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    toast('PDF scaricato');
+    return file;
+  } catch (err) { showError('Non riesco a creare il PDF', err); return null; }
+}
+$('ask-pdf').onclick = () => { askPdf(); };
 // "Modifica ricerca": le ricerche fatte, una per riga; "Cerca di nuovo" rilancia la stessa richiesta con quelle
 $('ask-qedit-open').onclick = () => {
   if (askSt.busy || !askSt.queries.length || !askSt.last) return;
@@ -3721,4 +3797,4 @@ async function resumeLast() {
 // Appigli per i test automatici
 window.__penna = { D, Sync, S, nb, lib, openNotebook, refreshLibrary, exportBytes, flush, buildPages, setTool, runSearch, pdfjs, thumbUrl, version: APP_VERSION,
   goToPage, curIndex, saveNow, saveSt, copyNotebook, runFind, closeNotebook, want, stats: () => ({ rendering, want: want.size, drawn: nb.pages.filter((p) => p.bg.width > 0).length, textLayers: tlPages.size }),
-  N, R, rd, openReader, closeReader, pageGeo, bar, hideBar, renderAnnList, zoomTo, phone, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, strokePts, smoothPts, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, mail: askMail, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };
+  N, R, rd, openReader, closeReader, pageGeo, bar, hideBar, renderAnnList, zoomTo, phone, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, strokePts, smoothPts, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, mail: askMail, pdf: askPdf, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };

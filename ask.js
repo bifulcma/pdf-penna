@@ -96,6 +96,19 @@ export const PEN = 'Leggi la scrittura a mano nelle foto allegate e rispondi con
   + 'Se le foto sono più di una, sono pagine in ordine: trascrivile di seguito, ognuna preceduta da «Pagina N».\n\n'
   + '## Analisi\nL’idea centrale in una o due frasi; poi i punti principali in elenco; infine, se ci sono, cose da fare, domande aperte e punti deboli.\n\n'
   + 'La trascrizione deve essere completa, senza limiti di lunghezza; l’analisi resta breve.';
+// v26: tante pagine scritte a mano → a gruppi (PEN_PART: solo la trascrizione delle foto del gruppo), poi una richiesta sola
+// con tutto il testo trascritto per l'analisi (PEN_SUM). Il risultato ha la stessa forma: «## Trascrizione» e «## Analisi».
+export const PEN_PART = 'Leggi la scrittura a mano nelle foto allegate e scrivi SOLTANTO la trascrizione, senza introduzione, senza commenti e senza analisi. '
+  + 'Per ogni foto, in ordine, scrivi prima una riga «### Pagina N» (con il numero della pagina indicato sopra) e sotto il testo scritto a mano, '
+  + 'fedele parola per parola, in bella copia: stessi capoversi ed elenchi; correggi solo gli errori di ortografia evidenti. Una parola che non leggi bene '
+  + 'scrivila seguita da [?]; se non la leggi affatto scrivi [illeggibile]. Non aggiungere e non togliere niente. Se una nota commenta un punto del testo '
+  + 'stampato, dillo tra parentesi. Trascrizione completa, senza limiti di lunghezza. Non usare altri titoli.';
+export const PEN_SUM = 'Qui sopra c’è la trascrizione di appunti scritti a mano, pagina per pagina. Scrivi SOLTANTO l’analisi, senza titolo e senza ripetere il testo: '
+  + 'l’idea centrale in una o due frasi; poi i punti principali in elenco (indica la pagina quando serve); infine, se ci sono, cose da fare, domande aperte e punti deboli. '
+  + 'Resta breve. Le parole segnate con [?] sono incerte: non costruirci sopra.';
+export function penSumMessage(title, pagesText, transcript) {
+  return 'Documento: «' + (title || 'senza titolo') + '»\n\nTrascrizione della scrittura a mano (' + pagesText + '):\n' + fence(transcript) + '\n\n' + PEN_SUM;
+}
 ACTIONS.push({ id: 'pen', label: 'Trascrivi', ink: true, sel: PEN, page: PEN, doc: PEN });
 export const actionById = (id) => ACTIONS.find((a) => a.id === id) || null;
 const fence = (t) => '"""\n' + String(t).replace(/"""/g, '«»') + '\n"""';
@@ -123,7 +136,7 @@ export function buildMessage(ctx, what) {
   }
   if (ctx.ink && ctx.scope !== 'ink') out.push('', INK_NOTE.replace('{p}', ctx.page));
   const a = what.action ? actionById(what.action) : null;
-  out.push('', a ? (ctx.scope === 'ink' ? a.page : a[ctx.scope]) : 'Domanda: ' + String(what.question || '').trim() + '\nRispondi basandoti sul testo; se la risposta non c’è, dillo.');
+  out.push('', a ? (ctx.scope === 'ink' ? (ctx.part ? PEN_PART : a.page) : a[ctx.scope]) : 'Domanda: ' + String(what.question || '').trim() + '\nRispondi basandoti sul testo; se la risposta non c’è, dillo.');
   return out.join('\n');
 }
 // intestazione del commento salvato: si capisce subito da dove viene; col web, in fondo le ricerche e le fonti con gli URL

@@ -142,6 +142,11 @@ ok('mailDoc («Trascrivi»): oggetto, titolo, riga con che cos’è · pagina ·
   && md1.text === '# Il freno\n\nTrascrizione e analisi · Pagina 3 · scrittura a mano · Claude Opus · 18/11/2026\n\n## Trascrizione\n\nciao\n', md1);
 const md2 = A.mailDoc({ title: 'T', what: { question: ' Chi è\nil tiranno? ' }, src: 'qwen', model: '', info: '', answer: 'R', sources: [{ title: 'W', url: 'https://w.org/a' }], queries: ['Sufyani'], when: new Date(2026, 0, 5) });
 ok('mailDoc (domanda): la domanda in cima, ricerche e fonti in fondo', md2.subject === 'T · domanda' && md2.meta === 'Domanda · Qwen · 05/01/2026' && md2.md === '**Domanda:** Chi è il tiranno?\n\nR\n\nHo cercato: Sufyani\n\nFonti:\n1. W — https://w.org/a', md2);
+// v26: tante pagine scritte → gruppi di sola trascrizione + un'analisi finale
+const part = A.buildMessage({ title: 'Q', scope: 'ink', page: 4, ink: true, part: true, pages: [{ n: 4, text: '' }, { n: 7, text: 'x' }] }, { action: 'pen' });
+ok('buildMessage (gruppo): solo la trascrizione, «### Pagina N», niente «## Analisi»', part.includes('foto delle pagine 4, 7') && part.endsWith(A.PEN_PART) && part.includes('### Pagina N') && !part.includes('## Analisi'), part);
+const sum = A.penSumMessage('Q', 'pagine 1–4, 7', 'riga """ uno');
+ok('penSumMessage: la trascrizione tra virgolette (neutralizzate) e la richiesta di sola analisi', sum.startsWith('Documento: «Q»\n\nTrascrizione della scrittura a mano (pagine 1–4, 7):\n"""\nriga «» uno\n"""\n\n') && sum.endsWith(A.PEN_SUM) && A.PEN_SUM.includes('SOLTANTO l’analisi'), sum);
 
 console.log(`\n${pass} ok, ${fail} falliti`);
 process.exit(fail ? 1 : 0);

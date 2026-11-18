@@ -99,10 +99,25 @@ try {
 
   // 6. «Tutto il PDF»: le pagine scritte a mano dalla corrente in avanti, al massimo 3; dice che ne restano
   ok('«Tutto il PDF»: azioni «Riassumi il PDF» e «Trascrivi le pagine scritte a mano»', await (async () => { await P.eval(`__penna.ask.st.scope='doc'; document.querySelector('.ask-scope [data-scope="doc"]').click(); return 1`); await sleep(200); return (await q(`[...document.querySelectorAll('#ask-acts button')].map((b) => b.textContent).join('|')`)) === 'Riassumi il PDF|Trascrivi le pagine scritte a mano'; })());
+  n0 = ol.st.requests.length;
   sent = await run('doc', { action: 'pen' });
-  ok('tre foto (pagine 1, 2, 3), in ordine nel messaggio', sent.images && sent.images.length === 3 && /ci sono le foto delle pagine 1, 2, 3 \(una per pagina, in questo ordine\)/.test(sent.messages[0].content), sent.messages[0].content.slice(0, 400));
-  ok('nel pannello: «Pagine 1, 2, 3 · scrittura a mano (un’altra pagina scritta: spostati lì e ripeti)»', (await q(`__penna.ask.st.ctxInfo`)) === 'Pagine 1, 2, 3 · scrittura a mano (un’altra pagina scritta: spostati lì e ripeti)', await q(`__penna.ask.st.ctxInfo`));
-  ok('risposta nuova: il pulsante torna «Bozza Gmail»', (await btn()).text === 'Bozza Gmail');
+  const all = await q(`__penna.ask.st.sentAll`), ans = await q(`__penna.ask.st.answer`);
+  ok('quattro pagine scritte (1, 2, 3, 5): due gruppi di foto (3 + 1) e una richiesta di solo testo per l’analisi', all && all.length === 3 && all[0].images.length === 3 && all[1].images.length === 1 && !all[2].images && ol.st.requests.length === n0 + 3, all && all.map((b) => (b.images || []).length));
+  ok('i gruppi chiedono solo la trascrizione, pagina per pagina («### Pagina N»), con i numeri giusti', /foto delle pagine 1, 2, 3 /.test(all[0].messages[0].content) && /foto della pagina 5 /.test(all[1].messages[0].content) && all.slice(0, 2).every((b) => b.messages[0].content.includes('SOLTANTO la trascrizione') && b.messages[0].content.includes('### Pagina N') && !b.messages[0].content.includes('## Analisi')), all[1].messages[0].content.slice(0, 300));
+  ok('l’ultima richiesta: tutta la trascrizione come testo, e solo l’analisi da scrivere', /Trascrizione della scrittura a mano \(pagine 1–3, 5\):/.test(all[2].messages[0].content) && all[2].messages[0].content.includes('SOLTANTO l’analisi') && all[2].messages[0].content.includes('libertà'), all[2].messages[0].content.slice(0, 300));
+  ok('un testo solo: «## Trascrizione» una volta, poi «## Analisi» una volta', (ans.match(/^## Trascrizione$/gm) || []).length === 1 && (ans.match(/^## Analisi$/gm) || []).length === 1 && ans.indexOf('## Trascrizione') === 0 && ans.indexOf('## Analisi') > 200 && ans.length > ans.indexOf('## Analisi') + 40, ans.slice(0, 200));
+  ok('nel pannello: «Pagine 1–3, 5 · scrittura a mano»; nessun errore', (await q(`__penna.ask.st.ctxInfo`)) === 'Pagine 1–3, 5 · scrittura a mano' && !(await q(`__penna.ask.st.error`)), await q(`__penna.ask.st.ctxInfo`) + ' | ' + await q(`__penna.ask.st.error`));
+  ok('risposta nuova: il pulsante torna «Bozza Gmail»; c’è anche «Condividi PDF»', (await btn()).text === 'Bozza Gmail' && (await q(`(() => { const b = document.getElementById('ask-pdf'); return !b.hidden && !b.disabled && b.textContent.trim(); })()`)) === 'Condividi PDF');
+  const made = await q(`(async () => { Object.defineProperty(navigator, 'canShare', { value: () => false, configurable: true }); /* nel test niente foglio «Condividi»: si scarica */ const f = await __penna.ask.pdf(); const b = new Uint8Array(await f.arrayBuffer()); return { name: f.name, type: f.type, head: String.fromCharCode(...b.subarray(0, 5)), size: b.length }; })()`);
+  ok('«Condividi PDF»: un PDF vero, di nome «Quaderno di prova · trascrizione e analisi.pdf», senza passare dal Mac', made.head === '%PDF-' && made.type === 'application/pdf' && made.name === 'Quaderno di prova · trascrizione e analisi.pdf' && made.size > 2000 && gm.st.drafts.length === 1, made);
+  P.eval(`__penna.ask.mail(''); return 1`);
+  await P.waitFor(`__penna.ask.st.mailed === true`, 15000, 'bozza di tutte le pagine');
+  ok('«Bozza Gmail»: una bozza sola con tutte le pagine', gm.st.drafts.length === 2 && (await q(`__penna.ask.st.mailSent.text`)).includes('Pagine 1–3, 5 · scrittura a mano') && (await q(`__penna.ask.st.mailSent.text`)).includes('## Analisi'));
+  // tre pagine scritte o meno: una richiesta sola, come prima
+  await P.eval(`const r=__penna.nb.pages[4].rec; r.strokes=[]; r.updated=Date.now(); return 1`);
+  n0 = ol.st.requests.length;
+  sent = await run('doc', { action: 'pen' });
+  ok('tre pagine scritte: una richiesta sola con tre foto (trascrizione e analisi insieme)', ol.st.requests.length === n0 + 1 && sent.images.length === 3 && sent.messages[0].content.includes('## Analisi') && (await q(`__penna.ask.st.ctxInfo`)) === 'Pagine 1, 2, 3 · scrittura a mano', await q(`__penna.ask.st.ctxInfo`));
   const last = ol.st.requests.at(-1).messages.at(-1);
   ok('Ollama riceve le tre foto attraverso il bridge vero', Array.isArray(last.images) && last.images.length === 3);
 
@@ -111,7 +126,7 @@ try {
   await run('page', { question: 'Di cosa parla?' });
   P.eval(`__penna.ask.mail(''); return 1`);
   await P.waitFor(`__penna.ask.st.mailed === true`, 15000, 'seconda bozza');
-  ok('domanda normale: bozza senza destinatario, con la domanda nel testo', gm.st.drafts.length === 2 && !/^To:/m.test(gm.st.drafts[1]) && (await q(`__penna.ask.st.mailSent.text`)).includes('**Domanda:** Di cosa parla?') && (await q(`__penna.ask.st.mailSent.subject`)) === 'Quaderno di prova · domanda');
+  ok('domanda normale: bozza senza destinatario, con la domanda nel testo', gm.st.drafts.length === 3 && !/^To:/m.test(gm.st.drafts[2]) && (await q(`__penna.ask.st.mailSent.text`)).includes('**Domanda:** Di cosa parla?') && (await q(`__penna.ask.st.mailSent.subject`)) === 'Quaderno di prova · domanda');
   await P.eval(`__penna.ask.cfg.health.bozza = null; __penna.ask.run({ question: 'Ancora?' }); return 1`); await sleep(200);
   await P.waitFor(`!__penna.ask.st.busy`, 20000, 'risposta');
   ok('bridge vecchio (senza «bozza»): pulsante nascosto', (await btn()).hidden === true);

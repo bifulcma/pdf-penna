@@ -28,3 +28,13 @@ inchiostro 9/9, trascrivi 25/25, fase6 83/83. `fase5` (2), `brief11` (1), `brief
 ## Da vedere
 La pressione salvata è sempre 0,47 in tutti i quaderni: la penna di Marco non manda la pressione (o Safari non la passa),
 quindi lo spessore non cambia mai. Non toccato.
+
+# v26 (18/11/26, sera) — tutte le pagine scritte in un PDF solo; «Condividi PDF»
+
+- **Trascrivi le pagine scritte a mano** («Tutto il PDF»): prima ne prendeva 3 e diceva «spostati lì e ripeti». Ora, se le pagine
+  con tratti sono più di 3, l'app fa da sola (`askPenAll`): gruppi di 3 foto con la sola trascrizione (`PEN_PART`, «### Pagina N»),
+  poi una richiesta di solo testo per l'analisi (`PEN_SUM`). Risultato: un testo unico («## Trascrizione» + «## Analisi»), quindi
+  una bozza sola e un PDF solo. Fino a 3 pagine scritte: una richiesta sola, come prima. Nel pannello: «gruppo 2 di 4».
+- **Condividi PDF** (sotto ogni risposta): lo stesso PDF della bozza dato all'iPad/iPhone (foglio «Condividi» → Mail, Gmail, File).
+  Non passa dal Mac Studio. «Bozza Gmail» e «Condividi PDF» tengono la scritta anche sull'iPhone.
+- Test: `trascrivi` 31/31, `ask-unit` 76. Con Gemma vera: gruppo e analisi nel formato chiesto.

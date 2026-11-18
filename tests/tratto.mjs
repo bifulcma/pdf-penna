@@ -19,7 +19,7 @@ try {
   await P.goto(APP); await P.waitFor('window.__penna && document.getElementById("btn-new-nb")');
   await P.setFiles('#pdf-input', [OUT + '/Tratto.pdf']);
   await P.waitFor(`!document.getElementById('notebook').hidden && __penna.nb.pages[0] && __penna.nb.pages[0].wrap.dataset.rendered==='1'`, 20000, 'PDF aperto');
-  ok('app v25', (await q(`__penna.version`)) === 'v25');
+  ok('app v25 o successiva', +(await q(`__penna.version`)).slice(1) >= 25);
   const pg = await rect(P, '.page'); // lo strumento all'apertura è già la penna
 
   // 1. riga inclinata scritta un punto alla volta, sempre su posizioni intere: prima usciva una scaletta
