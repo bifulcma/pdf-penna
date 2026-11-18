@@ -19,6 +19,48 @@ function toPdf(u, v, w, h, rot) {
   }
 }
 
+// 18/11 (v25): Safari su iPad dà la posizione della penna in punti INTERI: scrivendo, ogni punto salvato dista dal precedente
+// un punto esatto in orizzontale, verticale o diagonale, e la riga diventa una scaletta (tratto seghettato). smoothPts toglie
+// la scaletta: ogni punto diventa la media pesata dei vicini entro R lungo il tratto (peso a triangolo). Le due estremità
+// restano dove sono e vicino a loro la finestra si stringe, così il tratto non si accorcia. Un tratto con i punti lontani
+// (riga veloce, mouse) non cambia. pts: [[x, y, pressione]] in 0–1; asp = altezza/larghezza della pagina; R in larghezze di
+// pagina (se manca: 4 volte il passo più comune del tratto, al massimo 0,006). Ritorna punti nuovi, stessi di numero.
+const SMOOTH_STEPS = 4, SMOOTH_MAX = 0.006;
+export function smoothPts(pts, asp = LAYOUT.a4, R) {
+  const n = pts.length;
+  if (n < 4) return pts;
+  const L = new Float64Array(n);
+  for (let i = 1; i < n; i++) L[i] = L[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], (pts[i][1] - pts[i - 1][1]) * asp);
+  if (R === undefined) {
+    const d = []; for (let i = 1; i < n; i++) d.push(L[i] - L[i - 1]);
+    d.sort((u, v) => u - v);
+    R = Math.min(SMOOTH_STEPS * d[d.length >> 1], SMOOTH_MAX);
+  }
+  if (!(R > 0)) return pts;
+  const out = new Array(n);
+  let lo = 0;
+  for (let i = 0; i < n; i++) {
+    const r = Math.min(R, L[i], L[n - 1] - L[i]);
+    if (!(r > 0)) { out[i] = pts[i]; continue; }
+    while (L[i] - L[lo] >= r) lo++;
+    let sx = 0, sy = 0, sw = 0;
+    for (let j = lo; j < n && L[j] - L[i] < r; j++) { const w = 1 - Math.abs(L[j] - L[i]) / r; sx += pts[j][0] * w; sy += pts[j][1] * w; sw += w; }
+    out[i] = [sx / sw, sy / sw, pts[i][2]];
+  }
+  return out;
+}
+// i punti da disegnare: quelli già lisciati mentre si scriveva (tratto con s: 1) così come sono, i vecchi lisciati adesso
+const smoothCache = new WeakMap(); // punti del tratto → { n, asp, out }
+export function strokePts(stroke, asp = LAYOUT.a4) {
+  const pts = stroke.pts;
+  if (stroke.s || stroke.t !== 'pen' || pts.length < 4) return pts;
+  const c = smoothCache.get(pts);
+  if (c && c.n === pts.length && c.asp === asp) return c.out;
+  const out = smoothPts(pts, asp);
+  smoothCache.set(pts, { n: pts.length, asp, out });
+  return out;
+}
+
 // 15/11: tratto di penna morbido. Invece di rette da un punto all'altro (si vedevano gli spigoli), curve quadratiche
 // che passano per i punti medi: il pezzo i va dal medio (i-1,i) al medio (i,i+1) con il punto i come controllo,
 // così due pezzi vicini hanno la stessa tangente. Spessore di ogni pezzo = pressione del suo punto di controllo.
@@ -60,7 +102,7 @@ export function drawStrokes(page, list) {
       page.drawCircle({ x: pts[0][0], y: pts[0][1], size: base * s.pts[0][2] / 2, color });
     } else {
       const P = (q) => { const [x, y] = toPdf(q[0], q[1], w, h, rot); return x + ' ' + (-y); };
-      for (const k of penPieces(s.pts)) {
+      for (const k of penPieces(strokePts(s, (rot % 180 ? w : h) / dispW))) { // senza scaletta (vedi smoothPts)
         const d = 'M ' + P(k.a) + (k.c ? ' Q ' + P(k.c) + ' ' + P(k.b) : ' L ' + P(k.b));
         page.drawSvgPath(d, { x: 0, y: 0, borderColor: color, borderWidth: base * k.p, borderLineCap: LineCapStyle.Round });
       }

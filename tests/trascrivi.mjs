@@ -45,7 +45,7 @@ try {
   await P.eval(`localStorage.setItem('penna.ai', JSON.stringify({ url: 'http://127.0.0.1:8768', token: ${JSON.stringify(TOKEN)}, privacy: 1, webPrivacy: 1, web: true, src: 'qwen', model: {} })); return 1`);
   await P.reload(); await P.waitFor('window.__penna && document.getElementById("btn-new-nb")');
   await P.waitFor(`__penna.ask.cfg.health && __penna.ask.cfg.health.bozza`, 10000, 'salute del bridge 8');
-  ok('app v24; il bridge 8 dice che Gmail non è ancora collegato', (await q(`__penna.version`)) === 'v24' && (await q(`__penna.ask.cfg.health.bozza.ok`)) === false);
+  ok('app v24 o successiva; il bridge 8 dice che Gmail non è ancora collegato', +(await q(`__penna.version`)).slice(1) >= 24 && (await q(`__penna.ask.cfg.health.bozza.ok`)) === false);
   await P.setFiles('#pdf-input', [OUT + '/Quaderno di prova.pdf']);
   await P.waitFor(`!document.getElementById('notebook').hidden && __penna.nb.pages.length === 5 && __penna.nb.pages[0].wrap.dataset.rendered==='1'`, 20000, 'PDF aperto');
   await P.eval(`__penna.ask.open(false); return 1`); await sleep(300);

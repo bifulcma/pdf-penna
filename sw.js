@@ -1,6 +1,6 @@
 // La versione della cache cambia a ogni aggiornamento dell'app. Il nuovo service worker si installa e prende
 // subito il controllo; l'app aperta mostra "È pronta una nuova versione · Aggiorna" (niente ricariche a sorpresa).
-const VERSION = 'v24'; // brief 14 (18/11): «Trascrivi» (scrittura a mano → testo + analisi) e «Bozza Gmail» con il PDF — cambiare questo file fa riscaricare tutto
+const VERSION = 'v25'; // 18/11: tratto di penna senza scaletta (lisciato mentre scrivi e sui tratti vecchi) · v24 brief 14: «Trascrivi» e «Bozza Gmail» — cambiare questo file fa riscaricare tutto
 const CACHE = 'pdf-penna-' + VERSION;
 const SHELL = [
   './', 'index.html', 'app.js', 'db.js', 'sync.js', 'pdfexport.js', 'find.js', 'notes.js', 'ask.js', 'textpdf.js', 'reader.js', 'config.js', 'polyfills.js', 'pdfworker.js', 'style.css', 'manifest.webmanifest',

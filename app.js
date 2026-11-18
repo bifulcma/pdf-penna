@@ -1,13 +1,13 @@
 import * as D from './db.js';
 import * as Sync from './sync.js';
-import { buildNotebookPdf, LAYOUT, HL_ALPHA, STRIKE_Y, penPieces, penPieceAt } from './pdfexport.js';
+import { buildNotebookPdf, LAYOUT, HL_ALPHA, STRIKE_Y, penPieces, penPieceAt, smoothPts, strokePts } from './pdfexport.js';
 import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 import * as R from './reader.js';
 import { buildTextPdf } from './textpdf.js';
 
-const APP_VERSION = 'v24';
+const APP_VERSION = 'v25';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -2874,7 +2874,7 @@ function drawStroke(ctx, stroke, W, H) {
     ctx.fill();
     return;
   }
-  for (const k of penPieces(pts)) drawPiece(ctx, stroke, k, W, H);
+  for (const k of penPieces(strokePts(stroke, H / W))) drawPiece(ctx, stroke, k, W, H); // senza scaletta: i tratti vecchi si lisciano qui, i nuovi lo sono già
 }
 // un pezzo di curva del tratto di penna (vedi penPieces in pdfexport.js)
 function drawPiece(ctx, stroke, k, W, H) {
@@ -2911,9 +2911,40 @@ function factor(e) {
   const pr = e.pressure > 0 ? e.pressure : 0.5;
   return 0.3 + 1.4 * pr;
 }
+// v25: mentre si scrive la penna è lisciata (smoothPts): Safari su iPad dà posizioni in punti interi e il tratto veniva a
+// scaletta. I punti a più di R dalla punta non cambiano più e vanno sulla pagina; l'ultimo pezzetto (ancora provvisorio)
+// sta in un piccolo foglio trasparente che segue la punta, così l'inchiostro arriva sempre fino alla penna senza sbavare.
+const LIVE_R = 4, LIVE_R_FINE = 1.5; // raggio in punti dello schermo: posizioni intere / posizioni con i decimali
+const TAIL = 200; // lato del foglio della punta, in punti della pagina
+const tailCv = document.createElement('canvas');
+tailCv.className = 'tail'; tailCv.setAttribute('aria-hidden', 'true');
+function hideTail() { tailCv.remove(); }
 function attachDrawing(p) {
   const c = p.draw;
   let cur = null, erased = null, pid = null, straight = false;
+  // punti lisciati del tratto in corso; disegna sulla pagina i pezzi ormai fermi e nel foglio della punta il resto
+  const liveInk = () => {
+    const asp = c.height / c.width, n = cur.raw.length;
+    const pts = cur.pts = smoothPts(cur.raw, asp, cur.R);
+    if (n < 2 || !c.width) return;
+    let F = n - 1, tail = 0; // F = ultimo punto fermo (a più di R dalla punta)
+    while (F > 0 && tail < cur.R) { tail += Math.hypot(cur.raw[F][0] - cur.raw[F - 1][0], (cur.raw[F][1] - cur.raw[F - 1][1]) * asp); F--; }
+    const ctx = c.getContext('2d');
+    for (let k = cur.drawn + 1; k <= F; k++) drawPiece(ctx, cur, penPieceAt(pts, k), c.width, c.height);
+    cur.drawn = Math.max(cur.drawn, F);
+    // la punta: i pezzi dopo F, più l'ultimo mezzo pezzo fino al punto dov'è la penna
+    const sc = c.width / (c.offsetWidth || p.cw || c.width), side = Math.round(TAIL * sc);
+    if (tailCv.width !== side) { tailCv.width = side; tailCv.height = side; }
+    if (tailCv.parentNode !== p.wrap) p.wrap.append(tailCv);
+    const last = pts[n - 1], ox = Math.round(last[0] * c.width - side / 2), oy = Math.round(last[1] * c.height - side / 2);
+    tailCv.style.width = tailCv.style.height = (side / sc) + 'px';
+    tailCv.style.left = (ox / sc) + 'px'; tailCv.style.top = (oy / sc) + 'px';
+    const t = tailCv.getContext('2d');
+    t.setTransform(1, 0, 0, 1, 0, 0); t.clearRect(0, 0, side, side); t.setTransform(1, 0, 0, 1, -ox, -oy);
+    for (let k = cur.drawn + 1; k <= n - 1; k++) drawPiece(t, cur, penPieceAt(pts, k), c.width, c.height);
+    const a = pts[n - 2];
+    drawPiece(t, cur, { a: [(a[0] + last[0]) / 2, (a[1] + last[1]) / 2], c: null, b: [last[0], last[1]], p: (a[2] + last[2]) / 2 }, c.width, c.height);
+  };
   const norm = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]; };
   // Dito (se attivato): disegna solo righe dritte con penna/evidenziatore; lo scorrimento verticale resta al browser
   // telefono (v22): con penna/evidenziatore/gomma un dito scrive (due dita scorrono e ingrandiscono, vedi il pizzico)
@@ -2921,7 +2952,7 @@ function attachDrawing(p) {
   const cancel = () => { // secondo dito sulla pagina: il tratto appena cominciato sparisce, si scorre
     if (pid === null) return;
     try { c.releasePointerCapture(pid); } catch {}
-    pid = null; nb.drawing = 0; liveCancel = null;
+    pid = null; nb.drawing = 0; liveCancel = null; hideTail();
     if (S.tool === 'eraser') { if (erased && erased.length) { queueSave(p.rec); pushAction({ type: 'del', items: erased }); } erased = null; return; }
     cur = null; redrawPage(p);
   };
@@ -2947,6 +2978,10 @@ function attachDrawing(p) {
     cur = { t: S.tool, c: o.color, w: o.size * widthFactor(S.tool), pts: [[x, y, factor(e)]] };
     straight = e.pointerType === 'touch' && !oneFinger();
     if (S.tool === 'hl') cur.a = o.alpha;
+    if (cur.t === 'pen' && !straight) { // penna a mano libera: lisciata mentre si scrive
+      cur.raw = [cur.pts[0]]; cur.drawn = 0; cur.fine = e.clientX % 1 !== 0 || e.clientY % 1 !== 0;
+      cur.px = 1 / (c.getBoundingClientRect().width || p.cw || 1); cur.R = (cur.fine ? LIVE_R_FINE : LIVE_R) * cur.px;
+    }
     redrawPage(p, cur);
   });
   c.addEventListener('pointermove', (e) => {
@@ -2958,19 +2993,22 @@ function attachDrawing(p) {
       const [x, y] = norm(ev);
       if (S.tool === 'eraser') { eraseAt(p, x, y, erased); continue; }
       if (!cur) continue;
-      const last = cur.pts[cur.pts.length - 1];
+      const last = cur.raw ? cur.raw[cur.raw.length - 1] : cur.pts[cur.pts.length - 1];
       if (Math.abs(last[0] - x) * p.cw < 0.4 && Math.abs(last[1] - y) * p.ch < 0.4) continue;
       if (straight) { cur.pts = [cur.pts[0], [x, cur.pts[0][1], 1]]; continue; }
       // pressione ammorbidita: lo spessore cambia gradualmente, senza scatti tra un punto e l'altro
       const pt = [x, y, cur.t === 'pen' ? last[2] * 0.6 + factor(ev) * 0.4 : factor(ev)];
-      cur.pts.push(pt);
-      if (cur.t === 'pen' && c.width) drawPiece(c.getContext('2d'), cur, penPieceAt(cur.pts, cur.pts.length - 1), c.width, c.height);
+      if (cur.raw) {
+        if (!cur.fine && (ev.clientX % 1 !== 0 || ev.clientY % 1 !== 0)) { cur.fine = true; cur.R = LIVE_R_FINE * cur.px; } // posizioni precise: basta lisciare poco
+        cur.raw.push(pt);
+      } else cur.pts.push(pt);
     }
+    if (cur && cur.raw) liveInk();
     if (cur && (cur.t === 'hl' || straight)) redrawPage(p, cur);
   });
   const finish = (e) => {
     if (e.pointerId !== pid) return;
-    pid = null; nb.drawing = 0; liveCancel = null;
+    pid = null; nb.drawing = 0; liveCancel = null; hideTail();
     if (e.pointerType === 'pen') lastPen = performance.now();
     try { c.releasePointerCapture(e.pointerId); } catch {}
     if (S.tool === 'eraser') {
@@ -2979,6 +3017,12 @@ function attachDrawing(p) {
     }
     if (!cur) return;
     const s = cur; cur = null;
+    if (s.raw) { // si salva il tratto lisciato (s: 1 = già liscio, non si liscia di nuovo quando lo si ridisegna)
+      const r5 = (v) => Math.round(v * 1e5) / 1e5;
+      s.pts = smoothPts(s.raw, (c.height / c.width) || p.aspect, s.R).map((q) => [r5(q[0]), r5(q[1]), Math.round(q[2] * 1e3) / 1e3]);
+      s.s = 1;
+      delete s.raw; delete s.drawn; delete s.fine; delete s.px; delete s.R;
+    }
     if (e.type === 'pointercancel') { redrawPage(p); return; }
     if (straight && (s.pts.length < 2 || Math.abs(s.pts[1][0] - s.pts[0][0]) * p.cw < 12)) { redrawPage(p); return; } // tocco o gesto troppo corto
     if (e.pointerType === 'touch' && oneFinger() && !s.pts.some((q) => Math.hypot((q[0] - s.pts[0][0]) * p.cw, (q[1] - s.pts[0][1]) * p.ch) > 8)) { redrawPage(p); return; } // tocco: niente puntino
@@ -3677,4 +3721,4 @@ async function resumeLast() {
 // Appigli per i test automatici
 window.__penna = { D, Sync, S, nb, lib, openNotebook, refreshLibrary, exportBytes, flush, buildPages, setTool, runSearch, pdfjs, thumbUrl, version: APP_VERSION,
   goToPage, curIndex, saveNow, saveSt, copyNotebook, runFind, closeNotebook, want, stats: () => ({ rendering, want: want.size, drawn: nb.pages.filter((p) => p.bg.width > 0).length, textLayers: tlPages.size }),
-  N, R, rd, openReader, closeReader, pageGeo, bar, hideBar, renderAnnList, zoomTo, phone, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, mail: askMail, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };
+  N, R, rd, openReader, closeReader, pageGeo, bar, hideBar, renderAnnList, zoomTo, phone, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, strokePts, smoothPts, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, mail: askMail, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };
