@@ -111,15 +111,18 @@ print(d.get("BackendState", ""), (s.get("DNSName") or "").rstrip(".") or "-", "s
   fi
   if [ -n "$src" ]; then
     cp "$src/bridge.py" "$src/uninstall.sh" "$tmp/"
+    cp "$src/gmail_accesso.py" "$tmp/" 2>/dev/null || true
   else
     for f in bridge.py uninstall.sh; do
       curl -fsSL --max-time 60 "$BASE_URL/$f" -o "$tmp/$f" </dev/null || die "Non riesco a scaricare $f (sei in rete?). Riprova tra poco."
     done
+    curl -fsSL --max-time 60 "$BASE_URL/gmail_accesso.py" -o "$tmp/gmail_accesso.py" </dev/null || rm -f "$tmp/gmail_accesso.py"  # facoltativo (bozze in Gmail)
   fi
   "$PY" -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$tmp/bridge.py" </dev/null 2>/dev/null \
     || die "Il file bridge.py è rovinato (download interrotto?): riprova tra poco."
   install -m 600 "$tmp/bridge.py" "$DIR/bridge.py" && install -m 700 "$tmp/uninstall.sh" "$DIR/uninstall.sh" || die "Non riesco a copiare i file in $DIR"
-  rm -f "$tmp/bridge.py" "$tmp/uninstall.sh"; rmdir "$tmp" 2>/dev/null
+  [ -s "$tmp/gmail_accesso.py" ] && install -m 700 "$tmp/gmail_accesso.py" "$DIR/gmail_accesso.py"  # collega Gmail: python3 ~/.studio-bridge/gmail_accesso.py
+  rm -f "$tmp/bridge.py" "$tmp/uninstall.sh" "$tmp/gmail_accesso.py"; rmdir "$tmp" 2>/dev/null
   ok "bridge copiato"
 
   # ---------- 6. Token (32 byte casuali, leggibile solo da te) ----------

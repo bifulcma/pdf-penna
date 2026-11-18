@@ -36,7 +36,7 @@ ok('Riassumi questa pagina', /Testo della pagina 7:/.test(pg) && /Riassumi quest
 const fq = A.buildMessage({ title: 'Libro', scope: 'doc', docText: '[Pagina 1]\nAbc', docNote: 'Passaggi (pagine 1 su 9):' }, { question: '  Chi è l’autore? ' });
 ok('Domanda sul PDF: passaggi + domanda', /Passaggi \(pagine 1 su 9\):/.test(fq) && /Domanda: Chi è l’autore\?\nRispondi basandoti sul testo/.test(fq));
 ok('le virgolette triple nel testo non chiudono il blocco', !/"""x"""/.test(A.buildMessage({ title: 't', scope: 'sel', quote: 'a """x""" b', page: 1 }, { action: 'ver' }).split('\n').slice(2, 5).join('')));
-ok('tutte le azioni hanno testo per selezione, pagina e PDF', A.ACTIONS.length === 4 && A.ACTIONS.every((a) => a.sel && a.page && a.doc) && A.ACTIONS.map((a) => a.label).join('|') === 'Spiega|Riassumi|Verifica|Obiezioni');
+ok('tutte le azioni hanno testo per selezione, pagina e PDF', A.ACTIONS.length === 5 && A.ACTIONS.every((a) => a.sel && a.page && a.doc) && A.ACTIONS.map((a) => a.label).join('|') === 'Spiega|Riassumi|Verifica|Obiezioni|Trascrivi');
 ok('commento salvato: azione — sorgente, poi la risposta', A.commentText({ action: 'explain' }, 'claude', 'sonnet', ' Risposta. ') === '✦ Spiega — Claude Sonnet\n\nRisposta.' && A.commentText({ question: 'Perché?' }, 'qwen', 'qwen3:14b', 'X') === '✦ Domanda: Perché? — Qwen\n\nX');
 
 // ---------- scelta delle pagine ----------
@@ -122,6 +122,26 @@ ok('withSources con le ricerche: risposta, «Ho cercato: …», poi «Fonti:»',
   A.withSources('Risposta.', [{ title: 'W', url: 'https://w.org/a' }], ['Sufyani escatologia sciita', 'al-Sufyani']) === 'Risposta.\n\nHo cercato: Sufyani escatologia sciita; al-Sufyani\n\nFonti:\n1. W — https://w.org/a');
 ok('commentText col web: «✦ Spiega — Qwen · web», ricerche e fonti in fondo',
   A.commentText({ action: 'explain' }, 'qwen', '', 'R', { web: true, sources: [{ title: 'W', url: 'https://w.org/a' }], queries: ['Sufyani'] }) === '✦ Spiega — Qwen · web\n\nR\n\nHo cercato: Sufyani\n\nFonti:\n1. W — https://w.org/a');
+
+// ---------- brief 14: «Trascrivi» (scrittura a mano → testo + analisi) e bozza in Gmail ----------
+const pen = A.actionById('pen');
+ok('«Trascrivi»: azione con la foto (ink), due titoli fissi, [?] e [illeggibile]', pen && pen.ink === true && !pen.web && pen.page.includes('## Trascrizione') && pen.page.includes('## Analisi') && pen.page.includes('[?]') && pen.page.includes('[illeggibile]'));
+const im1 = A.buildMessage({ title: 'Q', scope: 'ink', page: 3, ink: true, pages: [{ n: 3, text: 'Stampato """ qui' }] }, { action: 'pen' });
+ok('buildMessage (una pagina scritta): «c’è la foto della pagina 3», testo stampato come contesto (virgolette neutralizzate), poi la richiesta',
+  im1.startsWith('Documento: «Q»\n\nIn allegato c’è la foto della pagina 3 con la scrittura a mano') && im1.includes('Per contesto, il testo stampato della pagina 3:\n"""\nStampato «» qui\n"""') && im1.endsWith(A.PEN) && !im1.includes('foto della pagina 3 con i segni'), im1);
+const im3 = A.buildMessage({ title: 'Q', scope: 'ink', page: 2, ink: true, pages: [{ n: 2, text: '' }, { n: 5, text: 'x' }, { n: 6, text: ' ' }] }, { action: 'pen' });
+ok('buildMessage (più pagine): «le foto delle pagine 2, 5, 6 (una per pagina, in questo ordine)»; contesto solo dove c’è testo',
+  im3.includes('ci sono le foto delle pagine 2, 5, 6 (una per pagina, in questo ordine)') && (im3.match(/Per contesto/g) || []).length === 1 && im3.endsWith(A.PEN), im3);
+ok('le altre azioni non cambiano con la foto (nota sulla scrittura a mano)', A.buildMessage({ title: 'Q', scope: 'page', page: 1, pageText: 't', ink: true }, { action: 'sum' }).includes('foto della pagina 1 con i segni fatti a mano'));
+ok('parseEmails: virgole, punti e virgola, spazi, <>, doppioni', JSON.stringify(A.parseEmails(' anna@example.org; <luca.rossi@studio.example.com>,anna@example.org ')) === JSON.stringify({ ok: true, list: ['anna@example.org', 'luca.rossi@studio.example.com'] }));
+ok('parseEmails: vuoto va bene (il destinatario si sceglie in Gmail)', A.parseEmails('  ').ok && A.parseEmails('').list.length === 0);
+ok('parseEmails: indirizzo sbagliato o troppi → errore chiaro', /Indirizzo non valido: anna@@x/.test(A.parseEmails('anna@@x').error) && !A.parseEmails('a@b').ok && /Al massimo 5/.test(A.parseEmails('a@b.it b@b.it c@b.it d@b.it e@b.it f@b.it').error));
+const md1 = A.mailDoc({ title: ' Il  freno\n', what: { action: 'pen' }, src: 'claude', model: 'opus', info: 'Pagina 3 · scrittura a mano', answer: '## Trascrizione\n\nciao', when: new Date(2026, 10, 18) });
+ok('mailDoc («Trascrivi»): oggetto, titolo, riga con che cos’è · pagina · modello · data, testo per la mail e per il .md',
+  md1.subject === 'Il freno · trascrizione e analisi' && md1.title === 'Il freno' && md1.meta === 'Trascrizione e analisi · Pagina 3 · scrittura a mano · Claude Opus · 18/11/2026' && md1.md === '## Trascrizione\n\nciao'
+  && md1.text === '# Il freno\n\nTrascrizione e analisi · Pagina 3 · scrittura a mano · Claude Opus · 18/11/2026\n\n## Trascrizione\n\nciao\n', md1);
+const md2 = A.mailDoc({ title: 'T', what: { question: ' Chi è\nil tiranno? ' }, src: 'qwen', model: '', info: '', answer: 'R', sources: [{ title: 'W', url: 'https://w.org/a' }], queries: ['Sufyani'], when: new Date(2026, 0, 5) });
+ok('mailDoc (domanda): la domanda in cima, ricerche e fonti in fondo', md2.subject === 'T · domanda' && md2.meta === 'Domanda · Qwen · 05/01/2026' && md2.md === '**Domanda:** Chi è il tiranno?\n\nR\n\nHo cercato: Sufyani\n\nFonti:\n1. W — https://w.org/a', md2);
 
 console.log(`\n${pass} ok, ${fail} falliti`);
 process.exit(fail ? 1 : 0);

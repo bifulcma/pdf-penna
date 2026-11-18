@@ -797,7 +797,7 @@ dialog p:empty { display: none; }
   @keyframes askup { from { transform: translateY(30px); opacity: 0; } }
   .ask-queries .pill .long { display: none; }
   /* con una risposta, Copia e Riprova solo con l'icona: i pulsanti stanno su una riga e la risposta ha più spazio */
-  #ask.has-out #ask-copy span, #ask.has-out #ask-retry span { display: none; }
+  #ask.has-out #ask-copy span, #ask.has-out #ask-retry span, #ask.has-out #ask-mail span { display: none; }
   #ask.has-out #ask-copy, #ask.has-out #ask-retry { width: 44px; padding: 0; justify-content: center; }
   .ask-src button { min-width: 0; padding: 2px 11px; }
   .chip-act { padding: 0 13px; font-size: 14.5px; }

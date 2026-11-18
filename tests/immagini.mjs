@@ -44,7 +44,7 @@ let up = false;
 for (let i = 0; i < 100 && !up; i++) { try { up = (await call('GET', '/health')).status === 200; } catch {} if (!up) await sleep(100); }
 try {
   const h = (await call('GET', '/health')).json;
-  ok('health: versione 7 e immagini disponibili', h && h.version.startsWith('7') && h.immagini && h.immagini.ok && h.immagini.claude, JSON.stringify(h && h.immagini));
+  ok('health: versione 7 o successiva e immagini disponibili', h && +h.version >= 7 && h.immagini && h.immagini.ok && h.immagini.claude, JSON.stringify(h && h.immagini));
   const msg = [{ role: 'user', content: 'Che cosa ho scritto a mano?' }];
 
   let r = await call('POST', '/ask', { provider: 'qwen', model: 'qwen3:14b', messages: msg, images: [JPEG] });

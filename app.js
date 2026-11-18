@@ -5,8 +5,9 @@ import * as F from './find.js';
 import * as N from './notes.js';
 import * as A from './ask.js';
 import * as R from './reader.js';
+import { buildTextPdf } from './textpdf.js';
 
-const APP_VERSION = 'v23';
+const APP_VERSION = 'v24';
 const $ = (id) => document.getElementById(id);
 const library = $('library'), notebook = $('notebook'), viewer = $('viewer'), pagesEl = $('pages');
 const TYPE_LABEL = { blank: 'Foglio bianco', lined: 'Righe', grid: 'Quadretti', pdf: 'PDF' };
@@ -1886,8 +1887,8 @@ function paintAsk() {
       : 'Le pagine del PDF che servono: le scelgo con le parole della tua domanda (e ti dico quali)';
   q.classList.toggle('plain', askSt.scope !== 'sel');
   const acts = $('ask-acts'); acts.textContent = '';
-  for (const a of askSt.scope === 'doc' ? A.ACTIONS.filter((x) => x.id === 'sum') : A.ACTIONS) {
-    const b = el('button', 'chip-act', askSt.scope === 'doc' ? 'Riassumi il PDF' : a.label); b.type = 'button'; b.dataset.act = a.id;
+  for (const a of askSt.scope === 'doc' ? A.ACTIONS.filter((x) => x.id === 'sum' || x.id === 'pen') : A.ACTIONS) {
+    const b = el('button', 'chip-act', askSt.scope !== 'doc' ? a.label : a.id === 'pen' ? 'Trascrivi le pagine scritte a mano' : 'Riassumi il PDF'); b.type = 'button'; b.dataset.act = a.id;
     b.disabled = askSt.busy;
     b.onclick = () => askRun({ action: a.id });
     acts.append(b);
@@ -1971,6 +1972,10 @@ function paintAskOut() {
   $('ask-save').disabled = !canSave || !!askSt.saved;
   $('ask-save').querySelector('span').textContent = askSt.saved ? 'Salvato come commento ✓' : 'Salva come commento';
   $('ask-copy').disabled = !has;
+  const mb = $('ask-mail'); // bozza in Gmail con il PDF del testo: solo se il bridge la sa fare (versione 8)
+  mb.hidden = !(aiCfg.health && aiCfg.health.bozza);
+  mb.disabled = !has || !!askSt.mailBusy;
+  mb.querySelector('span').textContent = askSt.mailBusy ? 'Preparo la bozza…' : askSt.mailed && has ? 'Bozza creata ✓' : 'Bozza Gmail';
   const r = $('ask-retry');
   r.textContent = ''; r.append(icon(askSt.busy ? 'stop' : 'retry'), el('span', '', askSt.busy ? 'Ferma' : 'Riprova'));
   r.setAttribute('aria-label', askSt.busy ? 'Ferma' : 'Riprova'); r.title = r.getAttribute('aria-label'); // su iPhone si vede solo l'icona
@@ -2106,10 +2111,40 @@ async function inkImage(rec, src) {
   const url = await renderThumb(rec, INK_W, 0.8);
   return url ? url.slice(url.indexOf(',') + 1) : null;
 }
+// «Trascrivi» (brief 14): le foto delle pagine scritte a mano. Selezione o pagina: quella pagina. «Tutto il PDF»: le pagine
+// con tratti, dalla pagina corrente in avanti, quante ne accetta il bridge (3); se ce ne sono altre lo dice.
+async function inkContext(scope, src, title, touched) {
+  const max = Math.max(1, Math.min(3, (aiCfg.health && aiCfg.health.immagini && aiCfg.health.immagini.max) || 1));
+  const inked = (p) => (p.rec.strokes || []).length > 0;
+  if (!inkOk(src)) return { error: src === 'argon' ? 'Argon legge solo il testo: per la scrittura a mano scegli Claude o un modello locale.' : 'Per leggere la scrittura a mano serve il bridge aggiornato sul Mac Studio.' };
+  let list, more = 0;
+  if (scope === 'doc') {
+    const all = nb.pages.filter(inked), from = all.filter((p) => nb.pages.indexOf(p) >= Math.max(0, curIndex()));
+    const pool = from.length ? from : all;
+    list = pool.slice(0, max); more = all.length - list.length;
+    if (!list.length) return { error: 'In questo quaderno non c’è scrittura a mano da trascrivere.' };
+  } else {
+    const p = scope === 'sel' && askSt.sel ? askSt.sel.p : nb.pages[Math.max(0, curIndex())];
+    if (!p || !inked(p)) return { error: 'Su questa pagina non c’è scrittura a mano da trascrivere.' };
+    list = [p];
+  }
+  const pages = [], images = [];
+  for (const p of list) {
+    const img = await inkImage(p.rec, src).catch(() => null);
+    if (!img) return { error: 'Non riesco a fare la foto della pagina ' + (nb.pages.indexOf(p) + 1) + '. Riprova.' };
+    images.push(img);
+    pages.push({ n: nb.pages.indexOf(p) + 1, text: await aiPageText(p.rec, touched).catch(() => '') });
+  }
+  const nums = pages.map((x) => x.n);
+  return { ctx: { title, scope: 'ink', pages, page: nums[0], ink: true }, images,
+    info: (nums.length === 1 ? 'Pagina ' + nums[0] : 'Pagine ' + nums.join(', ')) + ' · scrittura a mano' + (more > 0 ? ' (' + (more === 1 ? 'un’altra pagina scritta' : 'altre ' + more + ' pagine scritte') + ': spostati lì e ripeti)' : '') };
+}
 async function askContext(scope, what, src) {
   const touched = new Set(), title = nb.node.name;
   try {
     if (scope === 'sel' && !askSt.sel) scope = 'page';
+    const act = what.action ? A.actionById(what.action) : null;
+    if (act && act.ink) return await inkContext(scope, src, title, touched);
     if (scope === 'sel') {
       const s = askSt.sel;
       const pageTextS = await aiPageText(s.p.rec, touched).catch(() => '');
@@ -2157,7 +2192,7 @@ async function refreshHealthQuiet() {
 }
 function storeHealth(j) {
   aiCfg.health = { at: Date.now(), version: String(j.version || ''), qwen: j.qwen, claude: j.claude, web_claude: j.web_claude || null, web_qwen: j.web_qwen || null,
-    gemma: j.gemma || null, web_gemma: j.web_gemma || null, argon: j.argon || null, backup: j.backup || null, sync: j.sync || null, immagini: j.immagini || null };
+    gemma: j.gemma || null, web_gemma: j.web_gemma || null, argon: j.argon || null, backup: j.backup || null, sync: j.sync || null, immagini: j.immagini || null, bozza: j.bozza || null };
   // la sorgente scelta non c'è (più) sul Mac: passo alla prima che c'è
   if (!(j[askSt.src] && j[askSt.src].ok) && !askSt.busy) {
     const alt = ['qwen', 'gemma', 'claude', 'argon'].find((k) => j[k] && j[k].ok);
@@ -2205,9 +2240,9 @@ async function askRun(what, opts = {}) {
     aiCfg.privacy = 1; saveAi();
   }
   // opts.queries = ricerche corrette a mano ("Modifica ricerca"): si cerca sul web con quelle, così come sono
-  const src = askSt.src, model = aiCfg.model[src] || '', queries = opts.queries && opts.queries.length ? opts.queries : null, act = what.action ? A.actionById(what.action) : null, web = src !== 'argon' && (!!queries || !!aiCfg.web || !!(act && act.web && aiCfg.webPrivacy)); // Argon non cerca sul web // «Verifica» cerca sul web se l'hai già autorizzato una volta
+  const src = askSt.src, model = aiCfg.model[src] || '', queries = opts.queries && opts.queries.length ? opts.queries : null, act = what.action ? A.actionById(what.action) : null, web = src !== 'argon' && !(act && act.ink) && (!!queries || !!aiCfg.web || !!(act && act.web && aiCfg.webPrivacy)); // «Trascrivi» non cerca mai sul web // Argon non cerca sul web // «Verifica» cerca sul web se l'hai già autorizzato una volta
   askSt.last = { what, scope: askSt.scope, src, model, web, queries };
-  askSt.busy = true; askSt.stopped = false; askSt.answer = ''; askSt.error = ''; askSt.saved = null; askSt.thinking = false;
+  askSt.busy = true; askSt.stopped = false; askSt.answer = ''; askSt.error = ''; askSt.saved = null; askSt.mailed = false; askSt.thinking = false;
   askSt.found = []; askSt.numbered = false; askSt.searching = ''; askSt.webOld = false;
   askSt.queries = queries || []; askSt.qPlanned = false; askSt.qFound = -1; askSt.qPoor = false; askSt.qedit = false;
   askSt.info = 'Preparo il testo…'; askSt.ctxInfo = ''; askSt.model = model;
@@ -2316,6 +2351,49 @@ $('ask-close').onclick = closeAsk;
 askEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeAsk(); } });
 $('ask-retry').onclick = () => { if (askSt.busy) { askStop(); return; } const l = askSt.last; if (!l) return; askSt.scope = l.scope; askRun(l.what, { queries: l.queries }); };
 $('ask-copy').onclick = () => { if (askSt.answer) copyText(A.withSources(askSt.answer, askSources().list, askQueries()), 'Risposta copiata'); };
+// «Bozza Gmail» (brief 14): la risposta (di solito «Trascrivi»: scrittura a mano → testo + analisi) diventa un PDF fatto qui
+// sull'iPad; il Mac Studio lo mette nelle BOZZE di Gmail (non spedisce: la mail la mandi tu da Gmail) e ne tiene una copia.
+const bytesB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+async function askMail(toRaw) {
+  const l = askSt.last;
+  if (!l || !askSt.answer || askSt.busy || askSt.mailBusy || !aiReady()) return false;
+  if (!(aiCfg.health && aiCfg.health.bozza && aiCfg.health.bozza.ok)) await refreshHealthQuiet(); // forse Gmail è stato collegato nel frattempo
+  const hz = aiCfg.health && aiCfg.health.bozza;
+  if (!hz) return false;
+  if (!hz.ok) { await modal({ title: 'Gmail non è collegato', text: hz.error || 'Sul Mac Studio, nel Terminale:  python3 ~/.studio-bridge/gmail_accesso.py', options: [{ label: 'Ho capito', value: 'ok', accent: true }] }); return false; }
+  let to = toRaw;
+  if (to === undefined) {
+    const r = await modal({ title: 'Bozza in Gmail', input: aiCfg.mailTo || '',
+      text: 'Faccio un PDF con questo testo e lo metto nelle bozze di Gmail, dal Mac Studio. Non parte niente: la controlli e la mandi tu da Gmail.\n\nDestinatario (facoltativo: puoi sceglierlo dopo, in Gmail):',
+      options: [{ label: 'Crea la bozza', value: 'ok', accent: true }] });
+    if (!r || r.value !== 'ok') return false;
+    to = r.text;
+  }
+  const em = A.parseEmails(to);
+  if (!em.ok) { toast(em.error, 4000); return false; }
+  aiCfg.mailTo = em.list.join(', '); saveAi();
+  const answer = askSt.answer, title = nb.node.name;
+  const d = A.mailDoc({ title, what: l.what, src: l.src, model: askSt.model, info: askSt.ctxInfo, answer, sources: askSources().list, queries: askQueries() });
+  askSt.mailBusy = true; paintAskOut();
+  const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 90000);
+  try {
+    const pdf = await buildTextPdf(d.md, { title: d.title, meta: d.meta });
+    const body = { name: title, subject: d.subject, text: d.text, to: em.list, pdf: bytesB64(pdf) };
+    askSt.mailSent = { ...body, pdf: body.pdf.length }; // per i test
+    const r = await fetch(aiCfg.url + '/bozza', { method: 'POST', body: JSON.stringify(body), signal: ctrl.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + aiCfg.token } });
+    let j = null; try { j = await r.json(); } catch {}
+    if (!r.ok || !j || !j.ok) throw new Error((j && j.error) || (r.status === 404 ? 'Serve il bridge aggiornato sul Mac Studio.' : 'errore ' + r.status));
+    if (askSt.answer === answer) askSt.mailed = true;
+    toast('Bozza creata in Gmail ✓' + (em.list.length ? ' · per ' + em.list[0] + (em.list.length > 1 ? ' e altri' : '') : ' · il destinatario lo scegli in Gmail'), 5000);
+    return true;
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? 'Il Mac Studio non risponde.' : e.message === 'Failed to fetch' || e.message === 'Load failed' ? A.MSG_DOWN : e.message;
+    await modal({ title: 'Bozza non creata', text: msg, options: [{ label: 'Ho capito', value: 'ok', accent: true }] });
+    return false;
+  } finally { clearTimeout(t); askSt.mailBusy = false; paintAskOut(); }
+}
+$('ask-mail').onclick = () => { askMail(); };
 // "Modifica ricerca": le ricerche fatte, una per riga; "Cerca di nuovo" rilancia la stessa richiesta con quelle
 $('ask-qedit-open').onclick = () => {
   if (askSt.busy || !askSt.queries.length || !askSt.last) return;
@@ -3599,4 +3677,4 @@ async function resumeLast() {
 // Appigli per i test automatici
 window.__penna = { D, Sync, S, nb, lib, openNotebook, refreshLibrary, exportBytes, flush, buildPages, setTool, runSearch, pdfjs, thumbUrl, version: APP_VERSION,
   goToPage, curIndex, saveNow, saveSt, copyNotebook, runFind, closeNotebook, want, stats: () => ({ rendering, want: want.size, drawn: nb.pages.filter((p) => p.bg.width > 0).length, textLayers: tlPages.size }),
-  N, R, rd, openReader, closeReader, pageGeo, bar, hideBar, renderAnnList, zoomTo, phone, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };
+  N, R, rd, openReader, closeReader, pageGeo, bar, hideBar, renderAnnList, zoomTo, phone, readSelection, allMarkdown, tlPages, undo, redo, copyText, A, ask: { st: askSt, cfg: aiCfg, open: openAsk, close: closeAsk, run: askRun, mail: askMail, test: testAi, place: placeAsk, sizes: askSizes, snap: setSnap } };

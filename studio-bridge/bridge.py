@@ -9,6 +9,10 @@
 # la annuncia) e la copia di sicurezza dei PDF esportati: POST /backup salva il PDF in una cartella del Mac
 # (backup_dir, una sottocartella per quaderno, le ultime backup_keep copie). Bridge vecchi: l'app non prova nemmeno.
 #
+# Da VERSION 8: POST /bozza mette nelle BOZZE di Gmail il PDF che l'app ha fatto con il testo trascritto dalla scrittura
+# a mano (più l'analisi). Il bridge non spedisce mai: la mail la manda Marco da Gmail. Accesso: ~/.studio-bridge/gmail.json
+# (solo «scrivere bozze»), creato una volta con gmail_accesso.py; senza quel file /health dice bozza.ok = false.
+#
 # Regole: solo testo dentro e solo testo fuori. Nessun comando del Mac parte da ciò che arriva dall'iPad:
 # Ollama si chiama via HTTP, `claude` si avvia con argomenti fissi in lista (niente shell), senza strumenti,
 # e il testo della domanda gli arriva da stdin. Solo libreria standard di Python 3.8+ (niente da installare).
@@ -25,6 +29,7 @@
 #   corrette a mano dall'app ("Modifica ricerca") si usano così come sono. Risultati: senza doppioni, senza forum e siti
 #   scadenti, prima le fonti autorevoli; se sono pochi o fuori tema Qwen riprova una volta, poi lo dice chiaramente.
 
+import email.message
 import hmac
 import http.client
 import http.server
@@ -47,7 +52,7 @@ import time
 import unicodedata
 import urllib.parse
 
-VERSION = '7'  # 15/11: immagini della pagina (scrittura a mano) per Ollama e Claude
+VERSION = '8'  # 18/11: POST /bozza, il PDF del testo trascritto va nelle bozze di Gmail · 7 (15/11): immagini della pagina
 HOST = '127.0.0.1'  # fisso: dall'esterno si passa solo da Tailscale Serve
 HOME = os.environ.get('STUDIO_BRIDGE_HOME') or os.path.join(os.path.expanduser('~'), '.studio-bridge')
 
@@ -98,6 +103,10 @@ DEFAULTS = {
     'sync_dir': '~/.gemini/antigravity/scratch/argon/_penna_sync',
     'sync_max_mb': 300,
     'argon_web_dir': '~/.studio-bridge/argon-web',
+    # 18/11: bozze in Gmail (POST /bozza). L'accesso sta nel file gmail.json, creato una volta con gmail_accesso.py.
+    'gmail_url': 'https://gmail.googleapis.com',
+    'gmail_timeout': 40,
+    'bozza_max_mb': 3,         # PDF più grandi non si mettono in bozza (quelli di solo testo pesano pochi KB)
 }
 
 MAX_MESSAGES = 40
@@ -1759,6 +1768,156 @@ def validate(body):
     return provider, model, system, clean, web, {'ctx': ctx, 'queries': clean_queries(qs or [], user=True)}
 
 
+# ---------------------------------------------------------------- bozza in Gmail (POST /bozza, da VERSION 8)
+# L'app manda il PDF del testo (trascrizione della scrittura a mano + analisi) e il bridge lo mette nelle BOZZE di Gmail:
+# non spedisce mai niente, la mail la manda Marco da Gmail. L'accesso (solo «scrivere bozze», gmail.compose) sta in
+# ~/.studio-bridge/gmail.json, creato una volta con  python3 ~/.studio-bridge/gmail_accesso.py
+GMAIL_LOCK = threading.Lock()
+GMAIL_TOKEN = {'t': '', 'until': 0.0}
+EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9\-]{1,63}(?:\.[A-Za-z0-9\-]{1,63}){1,8}$')
+MAX_MAIL_TO = 5
+MAX_MAIL_TEXT = 300000
+MSG_GMAIL_OFF = 'Gmail non è ancora collegato al Mac Studio. Sul Mac, nel Terminale:  python3 ~/.studio-bridge/gmail_accesso.py'
+MSG_GMAIL_EXPIRED = 'L’accesso a Gmail è scaduto. Sul Mac, nel Terminale:  python3 ~/.studio-bridge/gmail_accesso.py'
+MSG_GMAIL_DOWN = 'Gmail non risponde (il Mac Studio è in rete?). Riprova tra poco.'
+
+
+class MailError(Exception):
+    pass
+
+
+def gmail_conf():
+    """I dati d'accesso a Gmail (file gmail.json, leggibile solo da te), o None se mancano."""
+    try:
+        with open(os.path.join(HOME, 'gmail.json'), encoding='utf-8') as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict) or not all(isinstance(d.get(k), str) and d[k] for k in ('client_id', 'client_secret', 'refresh_token')):
+        return None
+    uri = d.get('token_uri') if isinstance(d.get('token_uri'), str) else ''
+    d['token_uri'] = uri if re.match(r'^https://|^http://127\.0\.0\.1[:/]', uri) else 'https://oauth2.googleapis.com/token'
+    return d
+
+
+def gmail_http(url, body, headers):
+    """POST → (stato, risposta JSON o None). Errori di rete → MailError."""
+    u = urllib.parse.urlsplit(url)
+    cls = http.client.HTTPSConnection if u.scheme == 'https' else http.client.HTTPConnection
+    try:
+        c = cls(u.hostname, u.port or (443 if u.scheme == 'https' else 80), timeout=CFG['gmail_timeout'])
+        c.request('POST', u.path + ('?' + u.query if u.query else ''), body=body, headers=headers)
+        r = c.getresponse()
+        raw = r.read(2 * 1024 * 1024)
+        c.close()
+    except (OSError, http.client.HTTPException):
+        raise MailError(MSG_GMAIL_DOWN)
+    try:
+        data = json.loads(raw.decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        data = None
+    return r.status, data if isinstance(data, dict) else None
+
+
+def gmail_access(fresh=False):
+    """Il permesso temporaneo di Google (dura un'ora, tenuto in memoria e mai scritto), rinnovato quando serve."""
+    conf = gmail_conf()
+    if not conf:
+        raise MailError(MSG_GMAIL_OFF)
+    with GMAIL_LOCK:
+        if not fresh and GMAIL_TOKEN['t'] and time.time() < GMAIL_TOKEN['until']:
+            return GMAIL_TOKEN['t']
+        form = urllib.parse.urlencode({'client_id': conf['client_id'], 'client_secret': conf['client_secret'],
+                                       'refresh_token': conf['refresh_token'], 'grant_type': 'refresh_token'}).encode('ascii')
+        st, d = gmail_http(conf['token_uri'], form, {'Content-Type': 'application/x-www-form-urlencoded'})
+        if st in (400, 401):  # invalid_grant: permesso tolto o scaduto (app Google «in prova»: dura 7 giorni)
+            GMAIL_TOKEN.update(t='', until=0.0)
+            raise MailError(MSG_GMAIL_EXPIRED)
+        tok = d.get('access_token') if st == 200 and d else None
+        if not isinstance(tok, str) or not tok:
+            raise MailError('Google ha risposto con un errore (%d). Riprova tra poco.' % st)
+        life = d.get('expires_in')
+        GMAIL_TOKEN.update(t=tok, until=time.time() + max(60, (life if isinstance(life, (int, float)) else 3600) - 120))
+        return tok
+
+
+def gmail_draft(subject, text, to, filename, pdf):
+    """Crea una bozza con il PDF allegato. Non spedisce."""
+    msg = email.message.EmailMessage()
+    if to:
+        msg['To'] = ', '.join(to)
+    msg['Subject'] = subject
+    msg.set_content(text or ' ')
+    msg.add_attachment(pdf, maintype='application', subtype='pdf', filename=filename)
+    body = json.dumps({'message': {'raw': base64.urlsafe_b64encode(msg.as_bytes()).decode('ascii')}}).encode('ascii')
+    url = CFG['gmail_url'].rstrip('/') + '/gmail/v1/users/me/drafts'
+    for attempt in (0, 1):
+        tok = gmail_access(fresh=attempt == 1)
+        st, d = gmail_http(url, body, {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok})
+        if st == 401 and attempt == 0:
+            continue  # permesso temporaneo scaduto prima del previsto: uno nuovo e riprovo
+        if st == 200 and d and d.get('id'):
+            return
+        if st in (401, 403):
+            raise MailError(MSG_GMAIL_EXPIRED if st == 401 else 'Gmail ha rifiutato la bozza: l’accesso non ha il permesso di scrivere bozze. Sul Mac rilancia:  python3 ~/.studio-bridge/gmail_accesso.py')
+        raise MailError('Gmail ha risposto con un errore (%d). Riprova tra poco.' % st)
+
+
+def mail_one_line(raw, n):
+    s = CTRL_RE.sub(' ', unicodedata.normalize('NFC', raw)).replace('\n', ' ').replace('\t', ' ')
+    return re.sub(r'\s+', ' ', s).strip()[:n].strip()
+
+
+def validate_bozza(body):
+    """→ (nome del quaderno, oggetto, testo, destinatari, PDF in byte). Errori → BadRequest."""
+    if not isinstance(body, dict):
+        raise BadRequest('Richiesta non valida.')
+    name, subject, text, to, pdf = (body.get(k) for k in ('name', 'subject', 'text', 'to', 'pdf'))
+    if not isinstance(text, str) or not text.strip() or len(text) > MAX_MAIL_TEXT:
+        raise BadRequest('Testo mancante o troppo lungo.')
+    if not isinstance(pdf, str) or not pdf or len(pdf) > CFG['bozza_max_mb'] * 1398102:
+        raise BadRequest('PDF mancante o troppo grande (al massimo %d MB).' % CFG['bozza_max_mb'])
+    try:
+        data = base64.b64decode(pdf, validate=True)
+    except (binascii.Error, ValueError):
+        raise BadRequest('PDF non valido.')
+    if not data.startswith(b'%PDF-'):
+        raise BadRequest('PDF non valido.')
+    if to is None or to == '':
+        to = []
+    if isinstance(to, str):
+        to = [to]
+    if not isinstance(to, list) or len(to) > MAX_MAIL_TO or not all(isinstance(x, str) and EMAIL_RE.match(x.strip()) for x in to):
+        raise BadRequest('Indirizzo del destinatario non valido.')
+    name = backup_name(name if isinstance(name, str) else '')
+    subject = mail_one_line(subject if isinstance(subject, str) else '', 200) or 'PDF Penna · ' + name
+    return name, subject, CTRL_RE.sub('', text), [x.strip() for x in to], data
+
+
+def bozza_copy(name, text, pdf):
+    """Una copia del PDF e del testo (.md) in backup_dir/trascrizioni. → True se salvata."""
+    bdir = backup_dir()
+    if not bdir:
+        return False
+    d = os.path.join(bdir, 'trascrizioni')
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        with BACKUP_LOCK:
+            base = os.path.join(d, '%s %s' % (name, time.strftime('%Y-%m-%d %H.%M.%S')))
+            k = 2
+            while os.path.exists(base + '.pdf') or os.path.exists(base + '.md'):
+                base = os.path.join(d, '%s %s (%d)' % (name, time.strftime('%Y-%m-%d %H.%M.%S'), k))
+                k += 1
+            for ext, data in (('.pdf', pdf), ('.md', text.encode('utf-8'))):
+                fd = os.open(base + ext, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(data)
+        return True
+    except OSError as e:
+        log('bozza_copy: ' + type(e).__name__)
+        return False
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = 'StudioBridge/' + VERSION
     sys_version = ''
@@ -1878,6 +2037,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'web_argon': {'ok': argon_web(), 'error': '' if argon_web() else 'Argon lavora sui libri, non sul web'},
             'sync': {'ok': bool(sync_dir()), 'max_mb': CFG['sync_max_mb']},  # dove salva non si dice
             'immagini': {'ok': True, 'claude': info['ok'] and '--input-format' in info.get('flags', []), 'max': MAX_IMAGES},
+            'bozza': {'ok': bool(gmail_conf()), 'error': '' if gmail_conf() else MSG_GMAIL_OFF},  # bozze in Gmail (l'app mostra il pulsante)
         })
 
     # ---------- sincronizzazione tra iPad ----------
@@ -1968,6 +2128,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.guard():
                 self.backup()
             return
+        if path == '/bozza':
+            if self.guard():
+                self.bozza()
+            return
         if path != '/ask':
             self.send_json(404, {'error': 'Indirizzo sconosciuto.'})
             return
@@ -2057,6 +2221,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         confronto=self.headers.get('X-Penna-Confronto') == '1')
         finally:
             SEM.release()
+
+    # --- bozza in Gmail: POST /bozza, JSON { name, subject, text, to?, pdf (base64) }. Salva una copia (PDF + .md) e crea la bozza.
+    def bozza(self):
+        try:
+            n = int(self.headers.get('Content-Length') or '-1')
+        except ValueError:
+            n = -1
+        limit = CFG['bozza_max_mb'] * 1398102 + MAX_MAIL_TEXT * 4 + 65536
+        if n < 2 or n > limit:
+            self.close_connection = True
+            self.send_json(413 if n > limit else 400, {'error': 'Richiesta troppo grande.' if n > limit else 'Richiesta non valida.'})
+            return
+        try:
+            name, subject, text, to, pdf = validate_bozza(json.loads(self.rfile.read(n).decode('utf-8')))
+        except BadRequest as e:
+            self.send_json(400, {'error': str(e)})
+            return
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            self.send_json(400, {'error': 'Richiesta non valida (JSON).'})
+            return
+        if not gmail_conf():
+            self.send_json(503, {'error': MSG_GMAIL_OFF})
+            return
+        saved = bozza_copy(name, text, pdf)
+        t0 = time.time()
+        try:
+            gmail_draft(subject, text, to, name + '.pdf', pdf)
+        except MailError as e:
+            log('bozza -> errore in %.1fs' % (time.time() - t0))
+            self.send_json(502, {'error': str(e), 'saved': saved})
+            return
+        log('bozza -> ok (%d KB%s) in %.1fs' % (len(pdf) // 1024 + 1, ', copia sul Mac' if saved else '', time.time() - t0))
+        self.send_json(200, {'ok': True, 'saved': saved})
 
     # --- copia di sicurezza: POST /backup?name=<nome del quaderno>, corpo = il PDF. Salva in backup_dir/<nome>/<data ora>.pdf
     def backup(self):

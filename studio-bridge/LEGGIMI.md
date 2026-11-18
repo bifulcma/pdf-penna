@@ -88,3 +88,13 @@ Senza chiave, con Qwen + web compare: *"Per Qwen col web serve la chiave Tavily 
 - Avvio automatico: `~/Library/LaunchAgents/com.marco.studio-bridge.plist` (riparte da solo se si ferma).
 - Argon (dal 01/11/2026 cerca sul **web**): `agy` di Antigravity con Gemini 3.8 Flash, `--mode plan --sandbox`, nessun comando permesso, da una cartella vuota (`argon_web_dir`, `~/.studio-bridge/argon-web`). Usa solo `search_web` e `read_url_content` e cita le fonti; il testo del PDF arriva nella domanda come contesto. `agy` rifiuta di leggere file fuori dalla sua cartella (provato), quindi niente del Mac va a Google. Per tornare ai libri: in `config.json` metti `"argon_fonte": "libri"` e riavvia il bridge. `/health` dice `argon.fonte` (`web` o `libri`) e `web_argon`.
 - Sincronizzazione tra iPad (dal 01/11/2026, `VERSION 5`): l'app usa il Mac Studio al posto di OneDrive. `GET /sync/me/drive/special/approot/children` (elenco con `eTag`), `GET|PUT /sync/me/drive/special/approot:/<nome>:/content`; nomi solo `n-…json`, `p-…json`, `b-….pdf|jpg|png|bin`; `PUT` con `If-Match` risponde 412 se il file è cambiato nel frattempo. Cartella: `sync_dir` (`~/.gemini/antigravity/scratch/argon/_penna_sync`), al massimo `sync_max_mb` per file. `/health` dice `sync` (ok, `max_mb`).
+
+## Bozze in Gmail (versione 8)
+
+L'app può mettere nelle **bozze di Gmail** un PDF con il testo trascritto dalla scrittura a mano (pulsante «Bozza Gmail» sotto la
+risposta). Il bridge crea solo la bozza: non spedisce e non legge la posta. Per collegare Gmail, una volta, sul Mac:
+
+    python3 ~/.studio-bridge/gmail_accesso.py
+
+Si apre Google nel browser: scegli l'account e premi «Consenti». L'accesso resta in `~/.studio-bridge/gmail.json` (leggibile solo
+da te); per toglierlo cancella quel file. Una copia di ogni PDF (e del testo in `.md`) resta in `PDF-Penna/trascrizioni/`.

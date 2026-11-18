@@ -87,6 +87,16 @@ export const ACTIONS = [
     page: 'Quali obiezioni, punti deboli o controargomentazioni si possono sollevare al contenuto di questa pagina? Elenca le principali, ciascuna con una riga di spiegazione.',
     doc: 'Quali obiezioni, punti deboli o controargomentazioni si possono sollevare a questi passaggi? Elenca le principali, ciascuna con una riga di spiegazione.' },
 ];
+// 18/11 (brief 14): «Trascrivi» legge la scrittura a mano dalla foto della pagina (o delle pagine) e la mette in bella copia,
+// con un'analisi sotto. Sempre senza web. Il risultato può andare in PDF nelle bozze di Gmail (mailDoc, textpdf.js).
+export const PEN = 'Leggi la scrittura a mano nelle foto allegate e rispondi con due parti, con questi due titoli esatti.\n\n'
+  + '## Trascrizione\nIl testo scritto a mano, fedele parola per parola, in bella copia: stessi capoversi ed elenchi; correggi solo gli errori '
+  + 'di ortografia evidenti. Una parola che non leggi bene scrivila seguita da [?]; se non la leggi affatto scrivi [illeggibile]. Non aggiungere '
+  + 'e non togliere niente. Se una nota commenta un punto del testo stampato, dillo tra parentesi (per esempio: «a margine di …»). '
+  + 'Se le foto sono più di una, sono pagine in ordine: trascrivile di seguito, ognuna preceduta da «Pagina N».\n\n'
+  + '## Analisi\nL’idea centrale in una o due frasi; poi i punti principali in elenco; infine, se ci sono, cose da fare, domande aperte e punti deboli.\n\n'
+  + 'La trascrizione deve essere completa, senza limiti di lunghezza; l’analisi resta breve.';
+ACTIONS.push({ id: 'pen', label: 'Trascrivi', ink: true, sel: PEN, page: PEN, doc: PEN });
 export const actionById = (id) => ACTIONS.find((a) => a.id === id) || null;
 const fence = (t) => '"""\n' + String(t).replace(/"""/g, '«»') + '\n"""';
 const clipTo = (t, n) => (t.length > n ? t.slice(0, n).replace(/\s+\S*$/, '') + ' […]' : t);
@@ -101,14 +111,19 @@ export function buildMessage(ctx, what) {
   if (ctx.scope === 'sel') {
     out.push('', 'Testo selezionato (pagina ' + ctx.page + '):', fence(ctx.quote));
     if (ctx.pageText && ctx.pageText.trim()) out.push('', 'Per contesto, il testo della pagina ' + ctx.page + ':', fence(clipTo(ctx.pageText, 6000)));
+  } else if (ctx.scope === 'ink') { // «Trascrivi»: una foto per pagina, in ordine; il testo stampato serve solo da contesto
+    const pp = ctx.pages || [];
+    out.push('', 'In allegato ' + (pp.length === 1 ? 'c’è la foto della pagina ' + pp[0].n : 'ci sono le foto delle pagine ' + pp.map((x) => x.n).join(', ') + ' (una per pagina, in questo ordine)')
+      + ' con la scrittura a mano dell’utente (penna ed evidenziatore).');
+    for (const x of pp) if (x.text && x.text.trim()) out.push('', 'Per contesto, il testo stampato della pagina ' + x.n + ':', fence(clipTo(x.text, 5000)));
   } else if (ctx.scope === 'page') {
     out.push('', 'Testo della pagina ' + ctx.page + ':', ctx.pageText && ctx.pageText.trim() ? fence(ctx.pageText) : '(nessun testo stampato: solo scrittura a mano)');
   } else {
     out.push('', ctx.docNote || 'Passaggi del documento:', fence(ctx.docText || ''));
   }
-  if (ctx.ink) out.push('', INK_NOTE.replace('{p}', ctx.page));
+  if (ctx.ink && ctx.scope !== 'ink') out.push('', INK_NOTE.replace('{p}', ctx.page));
   const a = what.action ? actionById(what.action) : null;
-  out.push('', a ? a[ctx.scope] : 'Domanda: ' + String(what.question || '').trim() + '\nRispondi basandoti sul testo; se la risposta non c’è, dillo.');
+  out.push('', a ? (ctx.scope === 'ink' ? a.page : a[ctx.scope]) : 'Domanda: ' + String(what.question || '').trim() + '\nRispondi basandoti sul testo; se la risposta non c’è, dillo.');
   return out.join('\n');
 }
 // intestazione del commento salvato: si capisce subito da dove viene; col web, in fondo le ricerche e le fonti con gli URL
@@ -122,6 +137,27 @@ export function withSources(answer, sources = [], queries = []) {
   const s = String(answer).trim() + (queries.length ? '\n\nHo cercato: ' + queries.join('; ') : '');
   if (!sources.length) return s;
   return s + '\n\nFonti:\n' + sources.map((x, i) => (i + 1) + '. ' + (x.title && x.title !== x.url ? x.title + ' — ' : '') + x.url).join('\n');
+}
+
+// ---------- bozza in Gmail (bridge 8): il testo della risposta diventa un PDF allegato a una bozza ----------
+// "a@b.it, c@d.it" (anche con ; o spazi) → { ok, list } | { ok: false, error }. Vuoto va bene: il destinatario si mette in Gmail.
+export function parseEmails(raw) {
+  const list = [...new Set(String(raw || '').split(/[\s,;]+/).map((x) => x.trim().replace(/^<|>$/g, '')).filter(Boolean))];
+  const bad = list.find((x) => !/^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63}){1,8}$/.test(x));
+  if (bad) return { ok: false, error: 'Indirizzo non valido: ' + clipTo(bad, 60) };
+  if (list.length > 5) return { ok: false, error: 'Al massimo 5 destinatari.' };
+  return { ok: true, list };
+}
+// what: { action } | { question }; info: «Pagina 3 · con la scrittura a mano»; when: Date
+// → { subject, title, meta, md (corpo in markdown, per il PDF), text (titolo + riga + corpo: testo della mail e file .md) }
+export function mailDoc({ title, what, src, model, info = '', answer, sources = [], queries = [], when = new Date() }) {
+  const a = what.action ? actionById(what.action) : null;
+  const kind = a ? (a.id === 'pen' ? 'Trascrizione e analisi' : a.label) : 'Domanda';
+  const name = String(title || 'senza titolo').replace(/\s+/g, ' ').trim();
+  const day = [when.getDate(), when.getMonth() + 1, when.getFullYear()].map((n) => String(n).padStart(2, '0')).join('/');
+  const meta = [kind, info, SOURCES[src].label + (src === 'claude' ? ' ' + modelLabel(src, model) : ''), day].filter(Boolean).join(' · ');
+  const md = (a ? '' : '**Domanda:** ' + clipTo(String(what.question || '').replace(/\s+/g, ' ').trim(), 600) + '\n\n') + withSources(answer, sources, queries);
+  return { subject: clipTo(name, 120) + ' · ' + kind.toLowerCase(), title: name, meta, md, text: '# ' + name + '\n\n' + meta + '\n\n' + md + '\n' };
 }
 
 // ---------- "Cerca sul web" ----------
